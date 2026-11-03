@@ -116,7 +116,8 @@ export const titlesOf = (session) => ({ ...DEFAULT_TITLES, ...Object.fromEntries
 export const DEFAULT_INFO_CHOICE = ['소속 | 교원, 직원, 기타*'];
 export const DEFAULT_INFO_TEXT = [];
 
-/** 객관식 편집칸('질문 | 보기1, 보기2, …' 한 줄에 한 문항) → 문항 배열 */
+/** 객관식 편집칸('질문 | 보기1, 보기2, …' 한 줄에 한 문항, 질문 끝에 (복수) → 복수 선택) → 문항 배열 */
+const MULTI = /\s*\(복수\)\s*$/;
 export function parseChoices(text, prefix = 'c') {
   return text
     .split('\n')
@@ -124,12 +125,15 @@ export function parseChoices(text, prefix = 'c') {
     .filter(Boolean)
     .map((line, i) => {
       const k = line.indexOf('|');
-      const q = (k >= 0 ? line.slice(0, k) : line).trim();
+      let q = (k >= 0 ? line.slice(0, k) : line).trim();
+      const multi = MULTI.test(q);
+      if (multi) q = q.replace(MULTI, '');
       const options = k >= 0 ? [...new Set(line.slice(k + 1).split(',').map((o) => o.trim()).filter(Boolean))] : [];
-      return { id: `${prefix}${i + 1}`, text: q, options };
+      return { id: `${prefix}${i + 1}`, text: q, options, multi };
     });
 }
+export const choicesToText = (qs = []) => qs.map((q) => `${q.text}${q.multi ? '(복수)' : ''} | ${(q.options || []).join(', ')}`).join('\n');
+export const WHEN = { pre: '사전', post: '사후', both: '사전·사후' };
 // 보기 끝에 * → '직접입력' 보기 (예: 기타*)
 export const isEtc = (o) => /\*$/.test(o);
 export const optLabel = (o) => o.replace(/\s*\*$/, '');
-export const choicesToText = (qs = []) => qs.map((q) => `${q.text} | ${(q.options || []).join(', ')}`).join('\n');

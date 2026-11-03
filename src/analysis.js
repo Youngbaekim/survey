@@ -64,28 +64,45 @@ export function analyze(session, responses) {
     return { id: q.id, text: q.text, texts, keywords: keywords(texts) };
   });
 
-  // 참여자 정보: 사전 응답 우선, 없으면 사후 응답의 정보 사용
-  const allKeys = [...new Set([...pre.keys(), ...post.keys()])];
-  const infoOf = (k) => ({ ...(post.get(k)?.info || {}), ...(pre.get(k)?.info || {}) });
-  const infoChoice = (session.infoChoice || []).map((q) => {
-    const answered = allKeys.filter((k) => infoOf(k)[q.id]);
-    const etcTexts = answered.map((k) => (infoOf(k)[`${q.id}_etc`] || '').trim()).filter(Boolean);
+  // 객관식·주관식 집계 (복수 선택은 배열로 저장)
+  const has = (v, label) => (Array.isArray(v) ? v.includes(label) : v === label);
+  const filled = (v) => (Array.isArray(v) ? v.length > 0 : !!v);
+  const choiceStats = (qs, get, keys) => (qs || []).map((q) => {
+    const answered = keys.filter((k) => filled(get(k)?.[q.id]));
+    const etcTexts = answered.map((k) => (get(k)?.[`${q.id}_etc`] || '').trim()).filter(Boolean);
     const options = (q.options || []).map((raw) => {
       const label = optLabel(raw);
-      const keys = answered.filter((k) => infoOf(k)[q.id] === label);
-      const pk = pairedKeys.filter((k) => infoOf(k)[q.id] === label);
-      const pairs = pk.map((k) => [personMean(pre.get(k).eff, items), personMean(post.get(k).eff, items)]).filter((p) => p.every(Number.isFinite));
-      return { label, etc: isEtc(raw), count: keys.length, pct: answered.length ? keys.length / answered.length : NaN, change: compare(pairs) };
+      const sel = answered.filter((k) => has(get(k)[q.id], label));
+      const pairs = sel.filter((k) => pre.has(k) && post.has(k))
+        .map((k) => [personMean(pre.get(k).eff, items), personMean(post.get(k).eff, items)]).filter((p) => p.every(Number.isFinite));
+      return { label, etc: isEtc(raw), count: sel.length, pct: answered.length ? sel.length / answered.length : NaN, change: compare(pairs) };
     });
-    return { id: q.id, text: q.text, n: answered.length, options, etcTexts };
+    return { id: q.id, text: q.text, multi: !!q.multi, n: answered.length, options, etcTexts };
   });
-  const infoText = (session.infoText || []).map((q) => {
-    const texts = allKeys.map((k) => (infoOf(k)[q.id] || '').trim()).filter(Boolean);
+  const textStats = (qs, get, keys) => (qs || []).map((q) => {
+    const texts = keys.map((k) => (get(k)?.[q.id] || '').trim()).filter(Boolean);
     return { id: q.id, text: q.text, texts, keywords: keywords(texts) };
   });
 
+  // 참여자 정보: 사전 응답 우선, 없으면 사후 응답의 정보 사용
+  const allKeys = [...new Set([...pre.keys(), ...post.keys()])];
+  const infoOf = (k) => ({ ...(post.get(k)?.info || {}), ...(pre.get(k)?.info || {}) });
+  const infoChoice = choiceStats(session.infoChoice, infoOf, allKeys);
+  const infoText = textStats(session.infoText, infoOf, allKeys);
+
+  // 기타 문항 세트: 실시 단계별로 따로 집계
+  const extra = (session.extra || []).map((x) => {
+    const phases = (x.when === 'both' ? ['pre', 'post'] : [x.when || 'pre']).map((ph) => {
+      const src = ph === 'pre' ? pre : post;
+      const get = (k) => src.get(k)?.ext?.[x.id];
+      const keys = [...src.keys()];
+      return { phase: ph, label: ph === 'pre' ? '사전' : '사후', choice: choiceStats(x.choice, get, keys), text: textStats(x.text, get, keys) };
+    });
+    return { id: x.id, title: x.title || '기타 문항', phases };
+  });
+
   return {
-    infoChoice, infoText,
+    infoChoice, infoText, extra,
     scale: session.scale || 'L5',
     scaleMin: scale.min, scaleMax: scale.max,
     nPre: pre.size, nPost: post.size, nPaired: pairedKeys.length,

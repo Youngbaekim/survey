@@ -124,19 +124,36 @@ function scaleHtml(name, scale, value) {
   </div><div class="scale-ends"><span>${esc(scale.labels[0])}</span>${p100 ? `<span>${esc(scale.labels[5])}</span>` : ''}<span>${esc(scale.labels.at(-1))}</span></div>`;
 }
 
+function choiceBlock(bk, title, choice, text) {
+  if (!choice.length && !text.length) return '';
+  const opt = (o) => `<button type="button" data-c="${esc(optLabel(o))}" ${isEtc(o) ? 'data-etc="1"' : ''}>${esc(optLabel(o))}${isEtc(o) ? '(직접입력)' : ''}</button>`;
+  return `<div class="card" style="margin-top:10px"><h2>${esc(title)}</h2>
+    ${choice.map((q, i) => `<div class="q" data-ch="${bk}:${q.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(q.text)}${q.multi ? ' <small class="note">(복수 선택 가능)</small>' : ''}</div>
+      <div class="choices" data-bk="${bk}" data-id="${q.id}" ${q.multi ? 'data-multi="1"' : ''}>${q.options.map(opt).join('')}</div>
+      <input class="inp etc-inp" data-etc-for="${bk}:${q.id}" maxlength="100" placeholder="직접 입력해 주십시오" hidden /></div>`).join('')}
+    ${text.map((q, i) => `<div class="q"><div class="q-text"><span class="qn">${choice.length + i + 1}.</span>${esc(q.text)} <small class="note">(선택)</small></div>
+      <textarea class="ta auto" rows="1" data-free="${bk}:${q.id}" maxlength="300"></textarea></div>`).join('')}
+  </div>`;
+}
+
 function renderForm(key, needInfo) {
   view = 'form';
   const T = titlesOf(session);
-  const infoC = needInfo ? (session.infoChoice || []).filter((q) => q.options?.length) : [];
-  const infoT = needInfo ? session.infoText || [] : [];
   const ph = session.phase;
+  const blocks = [];
+  const okQ = (qs) => (qs || []).filter((q) => q.options?.length);
+  if (needInfo) blocks.push({ bk: 'info', title: T.info, choice: okQ(session.infoChoice), text: session.infoText || [] });
+  for (const x of session.extra || []) {
+    if (x.when === ph || x.when === 'both') blocks.push({ bk: x.id, title: x.title || '기타 문항', choice: okQ(x.choice), text: x.text || [] });
+  }
   const scale = SCALES[session.scale] || SCALES.L5;
   const retro = ph === 'post' && session.retro;
   const items = session.items || [];
   const sat = ph === 'post' ? session.sat || [] : [];
   const opens = (ph === 'pre' ? session.openPre : session.openPost) || [];
-  form = { key, info: {}, eff: {}, retro: {}, sat: {}, open: {} };
-  const required = infoC.length + items.length * (retro ? 2 : 1) + sat.length;
+  form = { key, ans: Object.fromEntries(blocks.map((b) => [b.bk, {}])), eff: {}, retro: {}, sat: {}, open: {} };
+  const nChoice = blocks.reduce((n, b) => n + b.choice.length, 0);
+  const required = nChoice + items.length * (retro ? 2 : 1) + sat.length;
 
   const intro = ph === 'pre'
     ? '각 문항에 대해 <b>지금 자신이 할 수 있다고 믿는 정도</b>를 골라 주십시오.'
@@ -146,13 +163,7 @@ function renderForm(key, needInfo) {
 
   root.innerHTML = `${head(ph === 'pre' ? '교육 전 설문' : '교육 후 설문')}
   <div class="progress"><i id="prog" style="width:0"></i></div>
-  ${infoC.length || infoT.length ? `<div class="card" style="margin-top:10px"><h2>${esc(T.info)}</h2>
-    ${infoC.map((q, i) => `<div class="q" data-q="info:${q.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(q.text)}</div>
-      <div class="choices" data-name="info:${q.id}">${q.options.map((o) => `<button type="button" data-c="${esc(optLabel(o))}" ${isEtc(o) ? 'data-etc="1"' : ''}>${esc(optLabel(o))}${isEtc(o) ? '(직접입력)' : ''}</button>`).join('')}</div>
-      <input class="inp etc-inp" data-etc-for="${q.id}" maxlength="100" placeholder="직접 입력해 주십시오" hidden /></div>`).join('')}
-    ${infoT.map((q, i) => `<div class="q"><div class="q-text"><span class="qn">${infoC.length + i + 1}.</span>${esc(q.text)} <small class="note">(선택)</small></div>
-      <input class="inp" data-info-text="${q.id}" maxlength="200" /></div>`).join('')}
-  </div>` : ''}
+  ${blocks.map((b) => choiceBlock(b.bk, b.title, b.choice, b.text)).join('')}
   <div class="card" style="margin-top:10px">
     <h2>${esc(T.eff)}</h2><p class="note">${intro}</p>
     ${items.map((it, i) => `<div class="q" data-q="eff:${it.id}${retro ? `,retro:${it.id}` : ''}">
@@ -165,13 +176,15 @@ function renderForm(key, needInfo) {
     ${sat.map((it, i) => `<div class="q" data-q="sat:${it.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(it.text)}</div>${scaleHtml(`sat:${it.id}`, SAT_SCALE)}</div>`).join('')}
   </div>` : ''}
   ${opens.length ? `<div class="card"><h2>${esc(T.open)} <small class="note">(선택)</small></h2>
-    ${opens.map((q) => `<div class="q"><div class="q-text">${esc(q.text)}</div><textarea class="ta" data-open="${q.id}" maxlength="1000" rows="3"></textarea></div>`).join('')}
+    ${opens.map((q) => `<div class="q"><div class="q-text">${esc(q.text)}</div><textarea class="ta auto" data-open="${q.id}" maxlength="1000" rows="2"></textarea></div>`).join('')}
   </div>` : ''}
   <div class="sticky-submit"><button id="submit" class="btn primary big">제출하기 (<span id="cnt">0</span>/${required})</button></div>
   <p class="note center">응답 코드는 암호화된 형태로만 저장되며 이름 등 개인 식별정보는 수집하지 않습니다.</p>`;
 
+  const chosen = (bk, id) => { const v = form.ans[bk][id]; return Array.isArray(v) ? v.length > 0 : !!v; };
   const update = () => {
-    const done = Object.keys(form.info).length + Object.keys(form.eff).length + Object.keys(form.retro).length + Object.keys(form.sat).length;
+    const nc = blocks.reduce((n, b) => n + b.choice.filter((q) => chosen(b.bk, q.id)).length, 0);
+    const done = nc + Object.keys(form.eff).length + Object.keys(form.retro).length + Object.keys(form.sat).length;
     root.querySelector('#cnt').textContent = done;
     root.querySelector('#prog').style.width = `${(done / Math.max(1, required)) * 100}%`;
   };
@@ -190,30 +203,49 @@ function renderForm(key, needInfo) {
     el.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-c]');
       if (!b) return;
-      const id = el.dataset.name.split(':')[1];
-      form.info[id] = b.dataset.c;
-      el.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x === b));
-      const etc = root.querySelector(`[data-etc-for="${id}"]`);
-      etc.hidden = !b.dataset.etc;
-      if (b.dataset.etc) etc.focus(); else { etc.value = ''; delete form.etcText?.[id]; }
-      el.closest('.q')?.classList.remove('missing');
+      const { bk, id } = el.dataset;
+      if (el.dataset.multi) b.classList.toggle('sel');
+      else el.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x === b));
+      const sel = [...el.querySelectorAll('button.sel')];
+      form.ans[bk][id] = el.dataset.multi ? sel.map((x) => x.dataset.c) : sel[0]?.dataset.c || '';
+      const etcOn = sel.some((x) => x.dataset.etc);
+      const etc = root.querySelector(`[data-etc-for="${bk}:${id}"]`);
+      if (etcOn && etc.hidden) { etc.hidden = false; etc.focus(); }
+      if (!etcOn) { etc.hidden = true; etc.value = ''; delete form.ans[bk][`${id}_etc`]; }
+      if (chosen(bk, id)) el.closest('.q')?.classList.remove('missing');
       update();
     });
   });
   root.querySelectorAll('[data-etc-for]').forEach((inp) => inp.addEventListener('input', () => {
-    form.etcText = { ...form.etcText, [inp.dataset.etcFor]: inp.value.trim().slice(0, 100) };
+    const [bk, id] = inp.dataset.etcFor.split(':');
+    form.ans[bk][`${id}_etc`] = inp.value.trim().slice(0, 100);
     if (inp.value.trim()) inp.closest('.q').classList.remove('missing');
   }));
-  root.querySelectorAll('[data-info-text]').forEach((inp) => inp.addEventListener('input', () => { form.infoText = { ...form.infoText, [inp.dataset.infoText]: inp.value.trim().slice(0, 200) }; }));
+  root.querySelectorAll('[data-free]').forEach((ta) => ta.addEventListener('input', () => {
+    const [bk, id] = ta.dataset.free.split(':');
+    form.ans[bk][id] = ta.value.trim().slice(0, 300);
+  }));
   root.querySelectorAll('[data-open]').forEach((ta) => ta.addEventListener('input', () => { form.open[ta.dataset.open] = ta.value.trim().slice(0, 1000); }));
+  autoGrow(root);
   root.querySelector('#submit').onclick = () => submit(required);
 }
 
+/** 입력칸 높이를 내용에 맞춰 자동 조절 */
+function autoGrow(scope) {
+  const fit = (ta) => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; };
+  scope.querySelectorAll('textarea.auto').forEach((ta) => { fit(ta); ta.addEventListener('input', () => fit(ta)); });
+}
+
 async function submit(required) {
-  const missing = [...root.querySelectorAll('.q[data-q]')].filter((q) =>
-    q.dataset.q.split(',').some((k) => { const [g, id] = k.split(':'); if (g !== 'info') return !Number.isFinite(form[g][id]);
-      const etcOn = !root.querySelector(`[data-etc-for="${id}"]`)?.hidden;
-      return !form.info[id] || (etcOn && !form.etcText?.[id]); }));
+  const missing = [...root.querySelectorAll('.q[data-q], .q[data-ch]')].filter((q) => {
+    if (q.dataset.ch) {
+      const [bk, id] = q.dataset.ch.split(':');
+      const v = form.ans[bk][id];
+      const etcOn = !root.querySelector(`[data-etc-for="${bk}:${id}"]`)?.hidden;
+      return !(Array.isArray(v) ? v.length : v) || (etcOn && !form.ans[bk][`${id}_etc`]);
+    }
+    return q.dataset.q.split(',').some((k) => { const [g, id] = k.split(':'); return !Number.isFinite(form[g][id]); });
+  });
   missing.forEach((q) => q.classList.add('missing'));
   if (missing.length) {
     missing[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -222,12 +254,13 @@ async function submit(required) {
   const ph = session.phase;
   const btn = root.querySelector('#submit');
   btn.disabled = true;
-  const open = Object.fromEntries(Object.entries(form.open).filter(([, v]) => v));
-  const info = { ...form.info, ...Object.fromEntries(Object.entries(form.infoText || {}).filter(([, v]) => v)),
-    ...Object.fromEntries(Object.entries(form.etcText || {}).filter(([k, v]) => v && form.info[k]).map(([k, v]) => [`${k}_etc`, v])) };
+  const clean = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => (Array.isArray(v) ? v.length : v)));
+  const open = clean(form.open);
+  const info = clean(form.ans.info);
+  const ext = Object.fromEntries(Object.entries(form.ans).filter(([k]) => k !== 'info').map(([k, v]) => [k, clean(v)]));
   try {
     await fb.setDoc(fb.doc(fb.db, 'sessions', sid, 'responses', `${ph}_${form.key}`), {
-      phase: ph, key: form.key, info, eff: form.eff, retro: form.retro, sat: form.sat, open, at: fb.serverTimestamp(),
+      phase: ph, key: form.key, info, ext, eff: form.eff, retro: form.retro, sat: form.sat, open, at: fb.serverTimestamp(),
     });
     local.set({ [ph]: { eff: form.eff, retro: form.retro } });
     window.scrollTo(0, 0);

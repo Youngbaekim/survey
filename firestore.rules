@@ -30,10 +30,11 @@ service cloud.firestore {
         let d = request.resource.data;
         return session().phase in ['pre', 'post']
           && d.phase == session().phase
-          && d.keys().hasOnly(['phase', 'key', 'info', 'eff', 'retro', 'sat', 'open', 'at'])
+          && d.keys().hasOnly(['phase', 'key', 'info', 'ext', 'eff', 'retro', 'sat', 'open', 'at'])
           && d.key is string && d.key.size() == 20
           && rid == d.phase + '_' + d.key
           && d.get('info', {}) is map && d.get('info', {}).size() <= 40
+          && d.get('ext', {}) is map && d.get('ext', {}).size() <= 20
           && d.eff is map && d.eff.size() <= 60
           && d.retro is map && d.retro.size() <= 60
           && d.sat is map && d.sat.size() <= 30

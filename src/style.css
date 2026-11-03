@@ -101,6 +101,9 @@ h1, h2, h3, h4 { line-height: 1.35; }
 .inp, .ta, select.sel { width: 100%; padding: 8px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font-size: 14.5px; outline: none; }
 .inp:focus, .ta:focus, select.sel:focus { border-color: var(--accent); }
 .ta { min-height: 110px; resize: vertical; line-height: 1.6; }
+.ta.auto { min-height: 0; resize: none; overflow: hidden; }
+.set-ctl { margin: 14px 0; }
+.x-set { border-left: 4px solid var(--accent); }
 .chk { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; padding-top: 6px; }
 .chk input { margin-top: 4px; accent-color: var(--accent); }
 @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } .form-grid > label { padding-top: 4px; } }

@@ -126,12 +126,12 @@ export function openView(list, label) {
     </div>`).join('');
 }
 
-/** 관리자용: 참여자 정보(객관식)별 응답 분포와 효능감 변화 */
-export function infoView(s) {
-  if (!s.infoChoice?.length) return '';
+/** 관리자용: 객관식 보기별 응답 분포와 효능감 변화 */
+export function choiceTables(s, list) {
+  if (!list?.length) return '';
   const d = dec(s);
-  return s.infoChoice.map((q) => `
-    <h4 class="info-q">${esc(q.text)} <small class="note">(응답 ${q.n}명)</small></h4>
+  return list.map((q) => `
+    <h4 class="info-q">${esc(q.text)} <small class="note">(응답 ${q.n}명${q.multi ? ' · 복수 선택, 비율 합계가 100%를 넘을 수 있음' : ''})</small></h4>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>보기</th><th>응답(비율)</th><th>짝 n</th><th>사전</th><th>사후</th><th>변화</th><th>d<sub>z</sub></th><th>t검정 p</th></tr></thead><tbody>
     ${q.options.map((o) => {
       const c = o.change;
@@ -139,5 +139,7 @@ export function infoView(s) {
         <td class="num">${fmt(c.pre, d)}</td><td class="num">${fmt(c.post, d)}</td><td class="num">${fmtSigned(c.diff, d)}</td>
         <td class="num">${c.n >= 2 ? fmt(c.dz) : '-'}</td><td class="num">${c.n >= 2 ? fmtP(c.p).replace('p ', '') : '-'}</td></tr>`;
     }).join('')}</tbody></table></div>
-    ${q.etcTexts?.length ? `<p class="note">직접입력: ${q.etcTexts.map(esc).join(' · ')}</p>` : ''}`).join('') + '<p class="note">집단별 비교는 인원이 적으면 해석에 주의가 필요합니다(짝 n &lt; 5는 참고용).</p>';
+    ${q.etcTexts?.length ? `<p class="note">직접입력: ${q.etcTexts.map(esc).join(' · ')}</p>` : ''}`).join('');
 }
+export const groupNote = '<p class="note">보기별 효능감 변화는 사전·사후 모두 응답한 사람(짝) 기준이며, 인원이 적으면 해석에 주의가 필요합니다(짝 n &lt; 5는 참고용).</p>';
+export const infoView = (s) => (s.infoChoice?.length ? choiceTables(s, s.infoChoice) + groupNote : '');
