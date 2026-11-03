@@ -12,7 +12,7 @@ import { summaryView, testLine, itemTable, openView, infoView, choiceTables, gro
 import { mean } from './stats.js';
 import { makeTestResponses, isTestKey } from './testdata.js';
 
-export const VERSION = 'v0.6.0';
+export const VERSION = 'v0.6.1';
 const ADMINS = ['youngpeace@gmail.com']; // firestore.rules의 목록과 같게 유지
 
 const root = document.getElementById('root');
@@ -652,7 +652,7 @@ function drawPeople(el) {
           <tr><td><b>평균</b></td><td class="num"><b>${fmt(ma, dp)}</b></td>${d.retro ? `<td class="num">${fmt(avg(b?.retro), dp)}</td>` : ''}<td class="num"><b>${fmt(mb, dp)}</b></td><td class="num"><b>${fmtSigned(diff, dp)}</b></td></tr></tbody></table>
         ${satRows ? `<h4>${esc(T.sat)}</h4><table class="tbl kv">${satRows}</table>` : ''}
         ${opens.length ? `<h4>${esc(T.open)}</h4><table class="tbl kv">${opens.map(([q, v, ph]) => `<tr><td>[${ph}] ${esc(q.text)}</td><td>${esc(v)}</td></tr>`).join('')}</table>` : ''}
-        <div class="btn-row no-print" style="justify-content:flex-end;margin-top:8px"><button class="btn danger" data-del="${esc(k)}">이 응답자 삭제</button></div>
+        <div class="btn-row no-print" style="justify-content:flex-end;margin-top:8px">${b ? `<a class="btn" target="_blank" rel="noopener" href="s.html?id=${encodeURIComponent(cur.id)}&preview=${encodeURIComponent(k)}">교육생 화면으로 보기 ↗</a>` : ''}<button class="btn danger" data-del="${esc(k)}">이 응답자 삭제</button></div>
       </div></details>`;
   };
 

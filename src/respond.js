@@ -8,6 +8,8 @@ import { mean } from './stats.js';
 
 const root = document.getElementById('root');
 const sid = new URLSearchParams(location.search).get('id') || '';
+// 관리자 미리보기: s.html?id=교육ID&preview=매칭키 → 해당 응답자의 '나의 결과' 화면
+const PREVIEW = (new URLSearchParams(location.search).get('preview') || '').slice(0, 20);
 const LS = `yb-survey:${sid}`;
 
 const local = {
@@ -38,12 +40,13 @@ async function start() {
     const prev = session;
     session = snap.data();
     // 단계가 바뀌었거나 처음이면 다시 그림 (작성 중인 응답은 단계가 같으면 유지)
-    if (!prev || prev.phase !== session.phase) route();
+    if (PREVIEW) renderPreview();
+    else if (!prev || prev.phase !== session.phase) route();
     else if (view === 'card') renderCard();
   }, () => { root.innerHTML = '<div class="empty">연결에 실패했습니다. 잠시 후 다시 열어 주세요.</div>'; });
   fs.onSnapshot(fs.doc(db, 'sessions', sid, 'public', 'summary'), (snap) => {
     summary = snap.exists() ? snap.data() : null;
-    if (view === 'card') renderCard();
+    if (PREVIEW) { if (session) renderPreview(); } else if (view === 'card') renderCard();
   }, () => {});
 }
 
@@ -290,12 +293,23 @@ function resetLocal() {
 
 // ── 3단계: 나의 결과 카드 ──
 let preCache = null;
-async function renderCard() {
+let previewMe = null;
+async function renderPreview() {
+  if (!previewMe) {
+    const get = (ph) => fb.getDoc(fb.doc(fb.db, 'sessions', sid, 'responses', `${ph}_${PREVIEW}`)).then((x) => (x.exists() ? x.data() : null)).catch(() => null);
+    const [a, b] = await Promise.all([get('pre'), get('post')]);
+    previewMe = { pre: a ? { eff: a.eff } : null, post: b ? { eff: b.eff, retro: b.retro } : null };
+  }
+  if (!previewMe.pre && !previewMe.post) { root.innerHTML = '<div class="empty">해당 응답자를 찾을 수 없습니다.</div>'; return; }
+  renderCard(previewMe);
+}
+
+async function renderCard(override = null) {
   view = 'card';
-  const me = local.get();
+  const me = override || local.get();
   const items = session.items || [];
   const scale = SCALES[session.scale] || SCALES.L5;
-  if (!me.pre && me.key && preCache === null) {
+  if (!override && !me.pre && me.key && preCache === null) {
     preCache = false;
     try {
       const snap = await fb.getDoc(fb.doc(fb.db, 'sessions', sid, 'responses', `pre_${me.key}`));
@@ -336,10 +350,11 @@ async function renderCard() {
       ${dumbbell(s, rows)}
       ${group ? '' : '<p class="note">강사가 전체 결과를 공개하면 이 화면에 전체 평균이 함께 표시됩니다.</p>'}`;
   }
-  root.innerHTML = `${head('나의 결과')}
+  const banner = override ? `<div class="preview-bar">관리자 미리보기 — 응답자 …${esc(PREVIEW.slice(-6))}의 ‘나의 결과’ 화면${session.showResults ? '' : ' · 결과 공개가 꺼져 있어 전체 평균은 표시되지 않습니다'}</div>` : '';
+  root.innerHTML = `${banner}${head('나의 결과')}
     <div class="card"><h2>교육 전후 나의 ${esc(titlesOf(session).eff)}</h2>${body}</div>
     ${session.showResults ? `<p class="center"><a class="btn" href="r.html?id=${encodeURIComponent(sid)}">전체 결과 보기 →</a></p>` : ''}
-    <p class="note center">이 결과는 이 기기에서만 보입니다. 참여해 주셔서 감사합니다.</p>
-    ${session.phase === 'post' ? '<p class="center"><button id="reset" class="btn">다른 사람이 이 기기로 응답하기</button></p>' : ''}`;
+    ${override ? '' : `<p class="note center">이 결과는 이 기기에서만 보입니다. 참여해 주셔서 감사합니다.</p>`}
+    ${!override && session.phase === 'post' ? '<p class="center"><button id="reset" class="btn">다른 사람이 이 기기로 응답하기</button></p>' : ''}`;
   root.querySelector('#reset')?.addEventListener('click', resetLocal);
 }
