@@ -4,7 +4,7 @@ import { getTheme, setTheme } from './theme.js';
 import { CONFIGURED } from './firebase-config.js';
 import {
   SCALES, TEMPLATES, DEFAULT_SAT, DEFAULT_OPEN_PRE, DEFAULT_OPEN_POST, PHASES,
-  parseItems, itemsToText, esc, fmt, respondUrl, resultUrl,
+  parseItems, itemsToText, esc, fmt, fmtSigned, respondUrl, resultUrl,
   DEFAULT_TITLES, titlesOf, DEFAULT_INFO_CHOICE, DEFAULT_INFO_TEXT, parseChoices, choicesToText, isEtc, WHEN, isLikert,
 } from './common.js';
 import { analyze, publicSummary } from './analysis.js';
@@ -12,7 +12,7 @@ import { summaryView, testLine, itemTable, openView, infoView, choiceTables, gro
 import { mean } from './stats.js';
 import { makeTestResponses, isTestKey } from './testdata.js';
 
-export const VERSION = 'v0.5.0';
+export const VERSION = 'v0.6.0';
 const ADMINS = ['youngpeace@gmail.com']; // firestore.rules의 목록과 같게 유지
 
 const root = document.getElementById('root');
@@ -184,7 +184,7 @@ function recompute() {
   }, 1500);
 }
 
-const TABS = [['run', '진행'], ['result', '결과'], ['open', '주관식'], ['setup', '설정·문항']];
+const TABS = [['run', '진행'], ['result', '결과'], ['open', '주관식'], ['people', '응답자'], ['setup', '설정·문항']];
 
 function drawHeader() {
   const h = root.querySelector('#sess-head');
@@ -206,7 +206,7 @@ function drawSession() {
     <div id="tab"></div>`;
   drawHeader();
   const el = root.querySelector('#tab');
-  ({ run: drawRun, result: drawResult, open: drawOpen, setup: drawSetup })[cur.tab]?.(el);
+  ({ run: drawRun, result: drawResult, open: drawOpen, people: drawPeople, setup: drawSetup })[cur.tab]?.(el);
   window.scrollTo(0, keepY);
 }
 
@@ -242,11 +242,14 @@ function drawRun(el) {
         짝지어진 응답이 <b>${d.minN || 5}명 미만</b>이면 개인 식별 방지를 위해 집계를 공개하지 않습니다. · 공개용 집계 갱신: <span id="pub-at">자동</span></p>
         <p class="note">※ 집계는 이 관리 화면이 열려 있는 동안 자동으로 갱신됩니다.</p>
       </div>
-      <div class="card"><h2>테스트 데이터</h2>
+      <div class="card"><h2>응답 관리</h2>
         <div class="btn-row"><input class="inp" id="t-n" type="number" min="5" max="200" value="50" style="width:90px" /><span>명</span>
           <button class="btn" id="t-make">가상 응답 생성</button>
           <button class="btn danger" id="t-clear" ${cur.responses.some((x) => isTestKey(x.key)) ? '' : 'disabled'}>테스트 응답 삭제 (${cur.responses.filter((x) => isTestKey(x.key)).length}건)</button></div>
         <p class="note">지금 문항 설정에 맞춰 사전 n명·사후 약 90%의 가상 응답을 넣습니다. 생성하는 동안 설문 단계가 잠시 사전→사후로 바뀌었다가 원래대로 돌아오므로, <b>실제 교육 진행 중에는 사용하지 마십시오.</b> 테스트 응답은 언제든 따로 지울 수 있습니다.</p>
+        <div class="btn-row" style="margin-top:10px"><button class="btn danger" id="all-clear" ${cur.responses.length ? '' : 'disabled'}>전체 응답 삭제 (${cur.responses.length}건)</button>
+          <a class="btn" href="#/s/${cur.id}/people">응답자별 보기</a></div>
+        <p class="note">전체 삭제는 실제·테스트 응답을 모두 지우며 되돌릴 수 없습니다. 필요하면 먼저 결과 탭에서 CSV를 내려받으십시오.</p>
       </div>
     </div></div>`;
   qrCanvas(url, 480).then((c) => { el.querySelector('#qr')?.replaceChildren(c); });
@@ -263,6 +266,7 @@ function drawRun(el) {
   el.querySelector('#show').onclick = () => update({ showResults: !d.showResults });
   el.querySelector('#t-make').onclick = () => seedTest(Math.max(5, Math.min(200, parseInt(el.querySelector('#t-n').value, 10) || 50)));
   el.querySelector('#t-clear').onclick = clearTest;
+  el.querySelector('#all-clear').onclick = clearAll;
 }
 
 // ── 테스트 데이터 ──
@@ -295,6 +299,23 @@ async function seedTest(n) {
     await F.updateDoc(F.doc(db, 'sessions', id), { phase: orig }).catch(() => {});
     seeding = false;
   }
+}
+
+async function deleteDocs(docs) {
+  for (let i = 0; i < docs.length; i += 400) {
+    const b = F.writeBatch(db);
+    docs.slice(i, i + 400).forEach((x) => b.delete(F.doc(db, 'sessions', cur.id, 'responses', `${x.phase}_${x.key}`)));
+    await b.commit();
+  }
+}
+
+async function clearAll() {
+  const n = cur.responses.length;
+  if (!n) return;
+  const ok = prompt(`‘${cur.data.title}’의 응답 ${n}건(실제·테스트 모두)을 영구 삭제합니다.\n계속하려면 ‘삭제’를 입력하십시오.`);
+  if (ok?.trim() !== '삭제') return toast('삭제를 취소했습니다.');
+  try { await deleteDocs([...cur.responses]); toast(`응답 ${n}건을 삭제했습니다.`); }
+  catch (e) { toast('삭제 실패: ' + (e.code || e.message)); }
 }
 
 async function clearTest() {
@@ -572,4 +593,82 @@ function autoGrow(scope) {
     fit(ta);
     if (!ta.dataset.grow) { ta.dataset.grow = '1'; ta.addEventListener('input', () => fit(ta)); }
   });
+}
+
+// ── 응답자 탭: 응답자별 응답 카드 ──
+const peopleUi = { filter: 'all', open: new Set(), all: false };
+const showV = (v) => (Array.isArray(v) ? v.join(', ') : v ?? '');
+const ansLine = (q, ans) => {
+  if (!ans) return '';
+  const v = ans[q.id];
+  if (v === undefined || v === '' || (Array.isArray(v) && !v.length)) return '';
+  const etc = ans[`${q.id}_etc`];
+  return `<tr><td>${esc(q.text)}</td><td>${esc(showV(v))}${etc ? ` <small class="note">(직접입력: ${esc(etc)})</small>` : ''}</td></tr>`;
+};
+
+function drawPeople(el) {
+  const d = cur.data, T = titlesOf(d), items = d.items || [];
+  const pre = new Map(), post = new Map();
+  cur.responses.forEach((r) => (r.phase === 'pre' ? pre : post).set(r.key, r));
+  const tm = (r) => r?.at?.seconds ?? r?.at?.toMillis?.() / 1000 ?? 0;
+  let keys = [...new Set([...pre.keys(), ...post.keys()])].sort((a, b) => (tm(pre.get(a) || post.get(a)) - tm(pre.get(b) || post.get(b))));
+  const num = new Map(keys.map((k, i) => [k, i + 1]));
+  const f = peopleUi.filter;
+  keys = keys.filter((k) => f === 'all' || (f === 'pair' && pre.has(k) && post.has(k)) || (f === 'pre' && pre.has(k) && !post.has(k)) || (f === 'post' && !pre.has(k) && post.has(k)) || (f === 'test' && isTestKey(k)));
+  const sc = SCALES[d.scale] || SCALES.L5, dp = d.scale === 'P100' ? 1 : 2;
+  const avg = (o) => { const v = items.map((i) => o?.[i.id]).filter(Number.isFinite); return v.length ? mean(v) : NaN; };
+  const cnt = { all: num.size, pair: [...num.keys()].filter((k) => pre.has(k) && post.has(k)).length, pre: [...num.keys()].filter((k) => pre.has(k) && !post.has(k)).length, post: [...num.keys()].filter((k) => !pre.has(k) && post.has(k)).length, test: [...num.keys()].filter(isTestKey).length };
+
+  const card = (k) => {
+    const a = pre.get(k), b = post.get(k);
+    const ma = avg(a?.eff), mb = avg(b?.eff), diff = mb - ma;
+    const info = { ...(b?.info || {}), ...(a?.info || {}) };
+    const infoRows = [...(d.infoChoice || []), ...(d.infoText || [])].map((q) => ansLine(q, info)).join('');
+    const extRows = (d.extra || []).map((x) => {
+      const rows = ['pre', 'post'].filter((ph) => x.when === ph || x.when === 'both').map((ph) => {
+        const src = (ph === 'pre' ? a : b)?.ext?.[x.id];
+        const r = [...(x.choice || []), ...(x.text || [])].map((q) => ansLine(q, src)).join('');
+        return r ? `${x.when === 'both' ? `<tr><th colspan="2">${ph === 'pre' ? '사전' : '사후'}</th></tr>` : ''}${r}` : '';
+      }).join('');
+      return rows ? `<h4>${esc(x.title)}</h4><table class="tbl kv">${rows}</table>` : '';
+    }).join('');
+    const effRows = items.map((it, i) => {
+      const p = a?.eff?.[it.id], q = b?.eff?.[it.id], r = b?.retro?.[it.id];
+      const dd = Number.isFinite(p) && Number.isFinite(q) ? q - p : NaN;
+      return `<tr><td>${i + 1}. ${esc(it.text)}</td><td class="num">${p ?? '-'}</td>${d.retro ? `<td class="num">${r ?? '-'}</td>` : ''}<td class="num">${q ?? '-'}</td><td class="num ${dd > 0 ? 'up-c' : dd < 0 ? 'down-c' : ''}">${fmtSigned(dd, 0)}</td></tr>`;
+    }).join('');
+    const satRows = (d.sat || []).map((q) => ansLine(q, b?.sat)).join('');
+    const opens = [...(d.openPre || []).map((q) => [q, a?.open?.[q.id], '사전']), ...(d.openPost || []).map((q) => [q, b?.open?.[q.id], '사후'])].filter((x) => x[1]);
+    const open = peopleUi.all || peopleUi.open.has(k);
+    return `<details class="pcard" data-k="${esc(k)}" ${open ? 'open' : ''}>
+      <summary><b>#${num.get(k)}</b> <span class="pkey">…${esc(k.slice(-6))}</span>
+        <span class="badge ${a ? 'pre' : 'closed'}">사전${a ? ' ✓' : ' ✕'}</span><span class="badge ${b ? 'post' : 'closed'}">사후${b ? ' ✓' : ' ✕'}</span>
+        ${isTestKey(k) ? '<span class="badge closed">테스트</span>' : ''}
+        <span class="psum">${esc(T.eff)} ${fmt(ma, dp)} → ${fmt(mb, dp)} ${Number.isFinite(diff) ? `<b class="${diff >= 0 ? 'up-c' : 'down-c'}">${fmtSigned(diff, dp)}</b>` : ''}</span></summary>
+      <div class="pbody">
+        ${infoRows ? `<h4>${esc(T.info)}</h4><table class="tbl kv">${infoRows}</table>` : ''}
+        ${extRows}
+        <h4>${esc(T.eff)}</h4><table class="tbl"><thead><tr><th>문항</th><th>사전</th>${d.retro ? '<th>회고적 사전</th>' : ''}<th>사후</th><th>변화</th></tr></thead><tbody>${effRows}
+          <tr><td><b>평균</b></td><td class="num"><b>${fmt(ma, dp)}</b></td>${d.retro ? `<td class="num">${fmt(avg(b?.retro), dp)}</td>` : ''}<td class="num"><b>${fmt(mb, dp)}</b></td><td class="num"><b>${fmtSigned(diff, dp)}</b></td></tr></tbody></table>
+        ${satRows ? `<h4>${esc(T.sat)}</h4><table class="tbl kv">${satRows}</table>` : ''}
+        ${opens.length ? `<h4>${esc(T.open)}</h4><table class="tbl kv">${opens.map(([q, v, ph]) => `<tr><td>[${ph}] ${esc(q.text)}</td><td>${esc(v)}</td></tr>`).join('')}</table>` : ''}
+        <div class="btn-row no-print" style="justify-content:flex-end;margin-top:8px"><button class="btn danger" data-del="${esc(k)}">이 응답자 삭제</button></div>
+      </div></details>`;
+  };
+
+  el.innerHTML = `<div class="btn-row no-print" style="margin-bottom:10px">
+      ${[['all', '전체'], ['pair', '사전·사후'], ['pre', '사전만'], ['post', '사후만'], ['test', '테스트']].map(([k, n]) => `<button class="btn ${f === k ? 'on' : ''}" data-f="${k}">${n} ${cnt[k]}</button>`).join('')}
+      <span style="flex:1"></span><button class="btn" id="p-all">${peopleUi.all ? '모두 접기' : '모두 펼치기'}</button><button class="btn" id="p-print">A4 인쇄</button></div>
+    <div class="print-only"><h1 style="margin:0 0 4px;font-size:16pt">${esc(d.title)} — 응답자별 응답</h1><p class="note">${esc([d.date, d.instructor].filter(Boolean).join(' · '))} · ${keys.length}명</p></div>
+    <p class="note no-print">응답 코드는 저장하지 않으므로 응답자는 순번(제출 순서)과 매칭키 끝 6자리로만 구분됩니다.</p>
+    <div class="plist">${keys.map(card).join('') || '<div class="empty">해당하는 응답자가 없습니다.</div>'}</div>`;
+  el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => { peopleUi.filter = b.dataset.f; drawPeople(el); }));
+  el.querySelector('#p-all').onclick = () => { peopleUi.all = !peopleUi.all; peopleUi.open.clear(); drawPeople(el); };
+  el.querySelector('#p-print').onclick = () => { el.querySelectorAll('details.pcard').forEach((x) => (x.open = true)); window.print(); };
+  el.querySelectorAll('details.pcard').forEach((x) => x.addEventListener('toggle', () => { x.open ? peopleUi.open.add(x.dataset.k) : peopleUi.open.delete(x.dataset.k); }));
+  el.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+    const k = b.dataset.del;
+    if (!confirm(`#${num.get(k)} 응답자의 사전·사후 응답을 삭제할까요?`)) return;
+    try { await deleteDocs(cur.responses.filter((x) => x.key === k)); toast('삭제했습니다.'); } catch (e) { toast('삭제 실패: ' + (e.code || e.message)); }
+  }));
 }
