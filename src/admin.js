@@ -10,8 +10,9 @@ import {
 import { analyze, publicSummary } from './analysis.js';
 import { summaryView, testLine, itemTable, openView, infoView, choiceTables, groupNote } from './render.js';
 import { mean } from './stats.js';
+import { makeTestResponses, isTestKey } from './testdata.js';
 
-export const VERSION = 'v0.4.0';
+export const VERSION = 'v0.5.0';
 const ADMINS = ['youngpeace@gmail.com']; // firestore.rules의 목록과 같게 유지
 
 const root = document.getElementById('root');
@@ -241,6 +242,12 @@ function drawRun(el) {
         짝지어진 응답이 <b>${d.minN || 5}명 미만</b>이면 개인 식별 방지를 위해 집계를 공개하지 않습니다. · 공개용 집계 갱신: <span id="pub-at">자동</span></p>
         <p class="note">※ 집계는 이 관리 화면이 열려 있는 동안 자동으로 갱신됩니다.</p>
       </div>
+      <div class="card"><h2>테스트 데이터</h2>
+        <div class="btn-row"><input class="inp" id="t-n" type="number" min="5" max="200" value="50" style="width:90px" /><span>명</span>
+          <button class="btn" id="t-make">가상 응답 생성</button>
+          <button class="btn danger" id="t-clear" ${cur.responses.some((x) => isTestKey(x.key)) ? '' : 'disabled'}>테스트 응답 삭제 (${cur.responses.filter((x) => isTestKey(x.key)).length}건)</button></div>
+        <p class="note">지금 문항 설정에 맞춰 사전 n명·사후 약 90%의 가상 응답을 넣습니다. 생성하는 동안 설문 단계가 잠시 사전→사후로 바뀌었다가 원래대로 돌아오므로, <b>실제 교육 진행 중에는 사용하지 마십시오.</b> 테스트 응답은 언제든 따로 지울 수 있습니다.</p>
+      </div>
     </div></div>`;
   qrCanvas(url, 480).then((c) => { el.querySelector('#qr')?.replaceChildren(c); });
   el.querySelector('#copy').onclick = () => navigator.clipboard.writeText(url).then(() => toast('응답 주소를 복사했습니다.'));
@@ -254,6 +261,53 @@ function drawRun(el) {
   };
   el.querySelectorAll('[data-phase]').forEach((b) => (b.onclick = () => setPhase(b.dataset.phase)));
   el.querySelector('#show').onclick = () => update({ showResults: !d.showResults });
+  el.querySelector('#t-make').onclick = () => seedTest(Math.max(5, Math.min(200, parseInt(el.querySelector('#t-n').value, 10) || 50)));
+  el.querySelector('#t-clear').onclick = clearTest;
+}
+
+// ── 테스트 데이터 ──
+let seeding = false;
+async function seedTest(n) {
+  if (seeding) return;
+  const d = cur.data, id = cur.id, orig = d.phase;
+  if (!confirm(`가상 응답 ${n}명(사전 ${n}건, 사후 약 ${Math.round(n * 0.9)}건)을 넣을까요?\n생성 중 설문 단계가 잠시 바뀌었다가 ‘${PHASES[orig]}’로 돌아옵니다.`)) return;
+  seeding = true;
+  const { pre, post } = makeTestResponses(d, n);
+  const put = async (docs) => {
+    for (let i = 0; i < docs.length; i += 400) {
+      const b = F.writeBatch(db);
+      docs.slice(i, i + 400).forEach((x) => b.set(F.doc(db, 'sessions', id, 'responses', `${x.phase}_${x.key}`), { ...x, at: F.serverTimestamp() }));
+      await b.commit();
+    }
+  };
+  try {
+    toast('사전 응답 생성 중…');
+    await F.updateDoc(F.doc(db, 'sessions', id), { phase: 'pre' });
+    await put(pre);
+    toast('사후 응답 생성 중…');
+    await F.updateDoc(F.doc(db, 'sessions', id), { phase: 'post' });
+    await put(post);
+    toast(`가상 응답을 넣었습니다. (사전 ${pre.length} · 사후 ${post.length})`);
+  } catch (e) {
+    console.error(e);
+    toast('생성 실패: ' + (e.code || e.message) + ' — Firestore 규칙 게시 여부를 확인하십시오.');
+  } finally {
+    await F.updateDoc(F.doc(db, 'sessions', id), { phase: orig }).catch(() => {});
+    seeding = false;
+  }
+}
+
+async function clearTest() {
+  const docs = cur.responses.filter((x) => isTestKey(x.key));
+  if (!docs.length || !confirm(`테스트 응답 ${docs.length}건을 삭제할까요? (실제 응답은 지워지지 않습니다)`)) return;
+  try {
+    for (let i = 0; i < docs.length; i += 400) {
+      const b = F.writeBatch(db);
+      docs.slice(i, i + 400).forEach((x) => b.delete(F.doc(db, 'sessions', cur.id, 'responses', `${x.phase}_${x.key}`)));
+      await b.commit();
+    }
+    toast('테스트 응답을 삭제했습니다.');
+  } catch (e) { toast('삭제 실패: ' + (e.code || e.message)); }
 }
 
 async function update(patch) {
