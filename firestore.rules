@@ -1,0 +1,60 @@
+rules_version = '2';
+// 교육 전후 설문 — Firestore 보안 규칙
+// - 관리자(ADMIN 목록의 Google 계정)만 교육을 만들고 응답 목록·원자료를 볼 수 있음
+// - 교육생은 로그인 없이 '지금 열린 단계(사전/사후)'에만 응답을 새로 제출할 수 있음 (수정·삭제 불가)
+// - 교육생은 교육 정보와 공개용 집계(public/summary)만 읽을 수 있음, 다른 사람 응답 목록은 볼 수 없음
+// 관리자를 추가하려면 아래 목록을 고친 뒤 Firebase 콘솔 → Firestore → 규칙 탭에 다시 게시
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in [
+          'youngpeace@gmail.com'
+        ];
+    }
+
+    match /sessions/{sid} {
+      allow get: if true;
+      allow list: if isAdmin() && resource.data.owner == request.auth.uid;
+      allow create: if isAdmin() && request.resource.data.owner == request.auth.uid;
+      allow update, delete: if isAdmin() && resource.data.owner == request.auth.uid;
+
+      function session() {
+        return get(/databases/$(database)/documents/sessions/$(sid)).data;
+      }
+      function isOwner() {
+        return isAdmin() && session().owner == request.auth.uid;
+      }
+      function validResponse(rid) {
+        let d = request.resource.data;
+        return session().phase in ['pre', 'post']
+          && d.phase == session().phase
+          && d.keys().hasOnly(['phase', 'key', 'eff', 'retro', 'sat', 'open', 'at'])
+          && d.key is string && d.key.size() == 20
+          && rid == d.phase + '_' + d.key
+          && d.eff is map && d.eff.size() <= 60
+          && d.retro is map && d.retro.size() <= 60
+          && d.sat is map && d.sat.size() <= 30
+          && d.open is map && d.open.size() <= 10
+          && d.at == request.time;
+      }
+
+      // 응답: 문서 ID = 단계_매칭키 → 같은 코드로 같은 단계 중복 제출 불가
+      // get 허용: 사후 응답 직후 '나의 결과' 화면에서 본인 사전 응답을 불러오기 위함 (이름 등 식별정보 없음)
+      match /responses/{rid} {
+        allow get: if true;
+        allow list: if isOwner();
+        allow create: if validResponse(rid);
+        allow update: if false;
+        allow delete: if isOwner();
+      }
+
+      // 공개용 집계 (관리 화면이 자동 갱신)
+      match /public/{doc} {
+        allow get: if true;
+        allow write: if isOwner();
+      }
+    }
+  }
+}

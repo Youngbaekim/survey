@@ -1,0 +1,18 @@
+{
+  "name": "survey",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^8.3.5"
+  },
+  "dependencies": {
+    "firebase": "^13.2.0",
+    "qrcode": "^1.5.4"
+  }
+}
