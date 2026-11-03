@@ -146,7 +146,7 @@ h1, h2, h3, h4 { line-height: 1.35; }
 .db-label em { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 1px 6px; border-radius: 6px; }
 .db-track { position: relative; height: 22px; margin: 0 8px; background: linear-gradient(var(--line), var(--line)) center / 100% 2px no-repeat; }
 .db-ticks { position: relative; height: 18px; margin: 0 8px; font-size: 11px; color: var(--soft); }
-.db-ticks span { position: absolute; transform: translateX(-50%); }
+.db-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
 .db-bar { position: absolute; top: 8px; height: 6px; border-radius: 3px; background: var(--up); opacity: .45; }
 .db-bar.down { background: var(--down); }
 .db-dot { position: absolute; top: 4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; border: 2px solid var(--pane); }
