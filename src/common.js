@@ -107,3 +107,29 @@ export function respondUrl(sid) {
 export function resultUrl(sid) {
   return new URL(`r.html?id=${encodeURIComponent(sid)}`, location.href.replace(/[^/]*$/, '')).href;
 }
+
+// ── 화면 타이틀 (설정에서 변경 가능) ──
+export const DEFAULT_TITLES = { info: '참여자 정보', eff: '효능감', sat: '만족도', open: '자유 의견' };
+export const titlesOf = (session) => ({ ...DEFAULT_TITLES, ...Object.fromEntries(Object.entries(session?.titles || {}).filter(([, v]) => v)) });
+
+// ── 참여자 정보 ──
+export const DEFAULT_INFO_CHOICE = ['소속 | 교원, 직원, 기타*'];
+export const DEFAULT_INFO_TEXT = [];
+
+/** 객관식 편집칸('질문 | 보기1, 보기2, …' 한 줄에 한 문항) → 문항 배열 */
+export function parseChoices(text, prefix = 'c') {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line, i) => {
+      const k = line.indexOf('|');
+      const q = (k >= 0 ? line.slice(0, k) : line).trim();
+      const options = k >= 0 ? [...new Set(line.slice(k + 1).split(',').map((o) => o.trim()).filter(Boolean))] : [];
+      return { id: `${prefix}${i + 1}`, text: q, options };
+    });
+}
+// 보기 끝에 * → '직접입력' 보기 (예: 기타*)
+export const isEtc = (o) => /\*$/.test(o);
+export const optLabel = (o) => o.replace(/\s*\*$/, '');
+export const choicesToText = (qs = []) => qs.map((q) => `${q.text} | ${(q.options || []).join(', ')}`).join('\n');

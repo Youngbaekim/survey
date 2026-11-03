@@ -1,6 +1,6 @@
 // 응답 → 분석 결과 (관리 화면·발표 모드·공개 결과·개인 카드가 함께 사용)
 import { mean, sd, pairedT, wilcoxon } from './stats.js';
-import { SCALES } from './common.js';
+import { SCALES, optLabel, isEtc } from './common.js';
 
 const personMean = (answers, items) => {
   const v = items.map((it) => answers?.[it.id]).filter((x) => Number.isFinite(x));
@@ -64,7 +64,28 @@ export function analyze(session, responses) {
     return { id: q.id, text: q.text, texts, keywords: keywords(texts) };
   });
 
+  // 참여자 정보: 사전 응답 우선, 없으면 사후 응답의 정보 사용
+  const allKeys = [...new Set([...pre.keys(), ...post.keys()])];
+  const infoOf = (k) => ({ ...(post.get(k)?.info || {}), ...(pre.get(k)?.info || {}) });
+  const infoChoice = (session.infoChoice || []).map((q) => {
+    const answered = allKeys.filter((k) => infoOf(k)[q.id]);
+    const etcTexts = answered.map((k) => (infoOf(k)[`${q.id}_etc`] || '').trim()).filter(Boolean);
+    const options = (q.options || []).map((raw) => {
+      const label = optLabel(raw);
+      const keys = answered.filter((k) => infoOf(k)[q.id] === label);
+      const pk = pairedKeys.filter((k) => infoOf(k)[q.id] === label);
+      const pairs = pk.map((k) => [personMean(pre.get(k).eff, items), personMean(post.get(k).eff, items)]).filter((p) => p.every(Number.isFinite));
+      return { label, etc: isEtc(raw), count: keys.length, pct: answered.length ? keys.length / answered.length : NaN, change: compare(pairs) };
+    });
+    return { id: q.id, text: q.text, n: answered.length, options, etcTexts };
+  });
+  const infoText = (session.infoText || []).map((q) => {
+    const texts = allKeys.map((k) => (infoOf(k)[q.id] || '').trim()).filter(Boolean);
+    return { id: q.id, text: q.text, texts, keywords: keywords(texts) };
+  });
+
   return {
+    infoChoice, infoText,
     scale: session.scale || 'L5',
     scaleMin: scale.min, scaleMax: scale.max,
     nPre: pre.size, nPost: post.size, nPaired: pairedKeys.length,

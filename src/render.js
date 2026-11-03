@@ -1,5 +1,5 @@
 // 결과 화면 그리기 (HTML 문자열) — 관리·발표·공개·개인 카드 공용
-import { esc, fmt, fmtSigned, pct } from './common.js';
+import { esc, fmt, fmtSigned, pct, DEFAULT_TITLES } from './common.js';
 import { effectLabel, fmtP } from './stats.js';
 
 const dec = (s) => (s.scale === 'P100' ? 1 : 2);
@@ -79,7 +79,7 @@ export function testLine(o) {
 }
 
 /** 공개용·발표용 전체 결과 (publicSummary 또는 analyze 결과 모두 사용 가능) */
-export function summaryView(s, { title = '', big = false } = {}) {
+export function summaryView(s, { title = '', big = false, titles = DEFAULT_TITLES } = {}) {
   if (!s) return '<div class="empty">아직 결과가 없습니다.</div>';
   if (s.locked) return `<div class="empty">사전·사후 모두 응답한 인원이 ${s.minN}명 이상이 되면 결과가 표시됩니다.<br>(현재 ${s.nPaired}명)</div>`;
   const itemRows = s.items.map((i) => ({ label: i.text, factor: i.factor, pre: i.pre, post: i.post, diff: i.diff }));
@@ -89,14 +89,14 @@ export function summaryView(s, { title = '', big = false } = {}) {
     ${title ? `<h2 class="sum-title">${esc(title)}</h2>` : ''}
     <p class="note">사전·사후 모두 응답(짝지어진 응답) ${s.nPaired}명 기준 · 척도 ${s.scaleMin}~${s.scaleMax}</p>
     ${kpis(s)}
-    ${factorRows.length ? `<h3>요인별 변화</h3>${legend()}${dumbbell(s, factorRows, { showFactor: false })}` : ''}
-    <h3>문항별 변화</h3>${legend()}${dumbbell(s, itemRows)}
+    ${factorRows.length ? `<h3>${esc(titles.eff)} — 요인별 변화</h3>${legend()}${dumbbell(s, factorRows, { showFactor: false })}` : ''}
+    <h3>${esc(titles.eff)} — 문항별 변화</h3>${legend()}${dumbbell(s, itemRows)}
     <h3>개인별 변화량</h3>${histogram(s)}
     ${retro ? `<h3>회고적 사전 평가(교육 후에 돌아본 교육 전 수준)</h3>
       <p class="note">교육을 받고 나서 기준이 높아지면 사전 점수를 높게 매기는 경향(응답 이동)을 보정하기 위한 비교입니다.</p>
       <div class="mini-kpis"><span>회고적 사전 <b class="pre-c">${fmt(retro.pre, dec(s))}</b></span><span>사후 <b class="post-c">${fmt(retro.post, dec(s))}</b></span><span>변화 <b>${fmtSigned(retro.diff, dec(s))}</b></span><span>d<sub>z</sub> <b>${fmt(retro.dz)}</b> (${effectLabel(retro.dz)})</span></div>
       ${retro.shift && retro.shift.n >= 2 ? `<p class="note">실제 사전 ${fmt(retro.shift.pre, dec(s))} vs 회고적 사전 ${fmt(retro.shift.post, dec(s))} (${fmtSigned(retro.shift.diff, dec(s))}, n=${retro.shift.n}) — 음수이면 교육 전 자신을 과대평가했던 것으로 해석</p>` : ''}` : ''}
-    ${s.sat?.length ? `<h3>만족도(5점)</h3>${satTable(s.sat)}` : ''}
+    ${s.sat?.length ? `<h3>${esc(titles.sat)}(5점)</h3>${satTable(s.sat)}` : ''}
   </div>`;
 }
 
@@ -124,4 +124,20 @@ export function openView(list, label) {
       ${q.keywords.length ? `<div class="chips">${q.keywords.map(([w, c]) => `<span class="chip">${esc(w)} <b>${c}</b></span>`).join('')}</div>` : ''}
       <ul class="open-list">${q.texts.map((t) => `<li>${esc(t)}</li>`).join('') || '<li class="note">응답 없음</li>'}</ul>
     </div>`).join('');
+}
+
+/** 관리자용: 참여자 정보(객관식)별 응답 분포와 효능감 변화 */
+export function infoView(s) {
+  if (!s.infoChoice?.length) return '';
+  const d = dec(s);
+  return s.infoChoice.map((q) => `
+    <h4 class="info-q">${esc(q.text)} <small class="note">(응답 ${q.n}명)</small></h4>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>보기</th><th>응답(비율)</th><th>짝 n</th><th>사전</th><th>사후</th><th>변화</th><th>d<sub>z</sub></th><th>t검정 p</th></tr></thead><tbody>
+    ${q.options.map((o) => {
+      const c = o.change;
+      return `<tr><td>${esc(o.label)}${o.etc ? ' <small>(직접입력)</small>' : ''}</td><td class="num"><span class="pbar"><i style="width:${(o.pct || 0) * 100}%"></i></span>${o.count} (${pct(o.pct)})</td><td class="num">${c.n}</td>
+        <td class="num">${fmt(c.pre, d)}</td><td class="num">${fmt(c.post, d)}</td><td class="num">${fmtSigned(c.diff, d)}</td>
+        <td class="num">${c.n >= 2 ? fmt(c.dz) : '-'}</td><td class="num">${c.n >= 2 ? fmtP(c.p).replace('p ', '') : '-'}</td></tr>`;
+    }).join('')}</tbody></table></div>
+    ${q.etcTexts?.length ? `<p class="note">직접입력: ${q.etcTexts.map(esc).join(' · ')}</p>` : ''}`).join('') + '<p class="note">집단별 비교는 인원이 적으면 해석에 주의가 필요합니다(짝 n &lt; 5는 참고용).</p>';
 }

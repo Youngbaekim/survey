@@ -2,7 +2,7 @@
 import './style.css';
 import './theme.js';
 import { CONFIGURED } from './firebase-config.js';
-import { SCALES, SAT_SCALE, scaleValues, validCode, codeKey, esc, fmt, fmtSigned } from './common.js';
+import { SCALES, SAT_SCALE, scaleValues, validCode, codeKey, esc, fmt, fmtSigned, titlesOf, isEtc, optLabel } from './common.js';
 import { dumbbell, legend } from './render.js';
 import { mean } from './stats.js';
 
@@ -101,7 +101,10 @@ function renderCode() {
         toast('이미 제출된 코드입니다.');
         return ph === 'post' ? renderCard() : renderDone();
       }
-      renderForm(key);
+      // 사후 단계: 사전 응답이 없는 사람에게만 참여자 정보를 물음
+      let needInfo = ph === 'pre';
+      if (ph === 'post') needInfo = !(await fb.getDoc(fb.doc(fb.db, 'sessions', sid, 'responses', `pre_${key}`))).exists();
+      renderForm(key, needInfo);
     } catch (e) {
       console.error(e);
       toast('연결에 실패했습니다. 다시 시도해 주세요.');
@@ -121,16 +124,19 @@ function scaleHtml(name, scale, value) {
   </div><div class="scale-ends"><span>${esc(scale.labels[0])}</span>${p100 ? `<span>${esc(scale.labels[5])}</span>` : ''}<span>${esc(scale.labels.at(-1))}</span></div>`;
 }
 
-function renderForm(key) {
+function renderForm(key, needInfo) {
   view = 'form';
+  const T = titlesOf(session);
+  const infoC = needInfo ? (session.infoChoice || []).filter((q) => q.options?.length) : [];
+  const infoT = needInfo ? session.infoText || [] : [];
   const ph = session.phase;
   const scale = SCALES[session.scale] || SCALES.L5;
   const retro = ph === 'post' && session.retro;
   const items = session.items || [];
   const sat = ph === 'post' ? session.sat || [] : [];
   const opens = (ph === 'pre' ? session.openPre : session.openPost) || [];
-  form = { key, eff: {}, retro: {}, sat: {}, open: {} };
-  const required = items.length * (retro ? 2 : 1) + sat.length;
+  form = { key, info: {}, eff: {}, retro: {}, sat: {}, open: {} };
+  const required = infoC.length + items.length * (retro ? 2 : 1) + sat.length;
 
   const intro = ph === 'pre'
     ? '각 문항에 대해 <b>지금 자신이 할 수 있다고 믿는 정도</b>를 골라 주십시오.'
@@ -140,25 +146,32 @@ function renderForm(key) {
 
   root.innerHTML = `${head(ph === 'pre' ? '교육 전 설문' : '교육 후 설문')}
   <div class="progress"><i id="prog" style="width:0"></i></div>
+  ${infoC.length || infoT.length ? `<div class="card" style="margin-top:10px"><h2>${esc(T.info)}</h2>
+    ${infoC.map((q, i) => `<div class="q" data-q="info:${q.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(q.text)}</div>
+      <div class="choices" data-name="info:${q.id}">${q.options.map((o) => `<button type="button" data-c="${esc(optLabel(o))}" ${isEtc(o) ? 'data-etc="1"' : ''}>${esc(optLabel(o))}${isEtc(o) ? '(직접입력)' : ''}</button>`).join('')}</div>
+      <input class="inp etc-inp" data-etc-for="${q.id}" maxlength="100" placeholder="직접 입력해 주십시오" hidden /></div>`).join('')}
+    ${infoT.map((q, i) => `<div class="q"><div class="q-text"><span class="qn">${infoC.length + i + 1}.</span>${esc(q.text)} <small class="note">(선택)</small></div>
+      <input class="inp" data-info-text="${q.id}" maxlength="200" /></div>`).join('')}
+  </div>` : ''}
   <div class="card" style="margin-top:10px">
-    <h2>효능감</h2><p class="note">${intro}</p>
+    <h2>${esc(T.eff)}</h2><p class="note">${intro}</p>
     ${items.map((it, i) => `<div class="q" data-q="eff:${it.id}${retro ? `,retro:${it.id}` : ''}">
       <div class="q-text"><span class="qn">${i + 1}.</span>${esc(it.text)}</div>
       ${retro ? `<div class="q-sub">① 교육 전의 나(돌아보며)</div>${scaleHtml(`retro:${it.id}`, scale)}<div class="q-sub">② 지금의 나</div>` : ''}
       ${scaleHtml(`eff:${it.id}`, scale)}
     </div>`).join('')}
   </div>
-  ${sat.length ? `<div class="card"><h2>만족도</h2>
+  ${sat.length ? `<div class="card"><h2>${esc(T.sat)}</h2>
     ${sat.map((it, i) => `<div class="q" data-q="sat:${it.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(it.text)}</div>${scaleHtml(`sat:${it.id}`, SAT_SCALE)}</div>`).join('')}
   </div>` : ''}
-  ${opens.length ? `<div class="card"><h2>자유 의견 <small class="note">(선택)</small></h2>
+  ${opens.length ? `<div class="card"><h2>${esc(T.open)} <small class="note">(선택)</small></h2>
     ${opens.map((q) => `<div class="q"><div class="q-text">${esc(q.text)}</div><textarea class="ta" data-open="${q.id}" maxlength="1000" rows="3"></textarea></div>`).join('')}
   </div>` : ''}
   <div class="sticky-submit"><button id="submit" class="btn primary big">제출하기 (<span id="cnt">0</span>/${required})</button></div>
   <p class="note center">응답 코드는 암호화된 형태로만 저장되며 이름 등 개인 식별정보는 수집하지 않습니다.</p>`;
 
   const update = () => {
-    const done = Object.keys(form.eff).length + Object.keys(form.retro).length + Object.keys(form.sat).length;
+    const done = Object.keys(form.info).length + Object.keys(form.eff).length + Object.keys(form.retro).length + Object.keys(form.sat).length;
     root.querySelector('#cnt').textContent = done;
     root.querySelector('#prog').style.width = `${(done / Math.max(1, required)) * 100}%`;
   };
@@ -173,13 +186,34 @@ function renderForm(key) {
       update();
     });
   });
+  root.querySelectorAll('.choices').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-c]');
+      if (!b) return;
+      const id = el.dataset.name.split(':')[1];
+      form.info[id] = b.dataset.c;
+      el.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x === b));
+      const etc = root.querySelector(`[data-etc-for="${id}"]`);
+      etc.hidden = !b.dataset.etc;
+      if (b.dataset.etc) etc.focus(); else { etc.value = ''; delete form.etcText?.[id]; }
+      el.closest('.q')?.classList.remove('missing');
+      update();
+    });
+  });
+  root.querySelectorAll('[data-etc-for]').forEach((inp) => inp.addEventListener('input', () => {
+    form.etcText = { ...form.etcText, [inp.dataset.etcFor]: inp.value.trim().slice(0, 100) };
+    if (inp.value.trim()) inp.closest('.q').classList.remove('missing');
+  }));
+  root.querySelectorAll('[data-info-text]').forEach((inp) => inp.addEventListener('input', () => { form.infoText = { ...form.infoText, [inp.dataset.infoText]: inp.value.trim().slice(0, 200) }; }));
   root.querySelectorAll('[data-open]').forEach((ta) => ta.addEventListener('input', () => { form.open[ta.dataset.open] = ta.value.trim().slice(0, 1000); }));
   root.querySelector('#submit').onclick = () => submit(required);
 }
 
 async function submit(required) {
   const missing = [...root.querySelectorAll('.q[data-q]')].filter((q) =>
-    q.dataset.q.split(',').some((k) => { const [g, id] = k.split(':'); return !Number.isFinite(form[g][id]); }));
+    q.dataset.q.split(',').some((k) => { const [g, id] = k.split(':'); if (g !== 'info') return !Number.isFinite(form[g][id]);
+      const etcOn = !root.querySelector(`[data-etc-for="${id}"]`)?.hidden;
+      return !form.info[id] || (etcOn && !form.etcText?.[id]); }));
   missing.forEach((q) => q.classList.add('missing'));
   if (missing.length) {
     missing[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -189,9 +223,11 @@ async function submit(required) {
   const btn = root.querySelector('#submit');
   btn.disabled = true;
   const open = Object.fromEntries(Object.entries(form.open).filter(([, v]) => v));
+  const info = { ...form.info, ...Object.fromEntries(Object.entries(form.infoText || {}).filter(([, v]) => v)),
+    ...Object.fromEntries(Object.entries(form.etcText || {}).filter(([k, v]) => v && form.info[k]).map(([k, v]) => [`${k}_etc`, v])) };
   try {
     await fb.setDoc(fb.doc(fb.db, 'sessions', sid, 'responses', `${ph}_${form.key}`), {
-      phase: ph, key: form.key, eff: form.eff, retro: form.retro, sat: form.sat, open, at: fb.serverTimestamp(),
+      phase: ph, key: form.key, info, eff: form.eff, retro: form.retro, sat: form.sat, open, at: fb.serverTimestamp(),
     });
     local.set({ [ph]: { eff: form.eff, retro: form.retro } });
     window.scrollTo(0, 0);
@@ -266,7 +302,7 @@ async function renderCard() {
       ${group ? '' : '<p class="note">강사가 전체 결과를 공개하면 이 화면에 전체 평균이 함께 표시됩니다.</p>'}`;
   }
   root.innerHTML = `${head('나의 결과')}
-    <div class="card"><h2>교육 전후 나의 효능감</h2>${body}</div>
+    <div class="card"><h2>교육 전후 나의 ${esc(titlesOf(session).eff)}</h2>${body}</div>
     ${session.showResults ? `<p class="center"><a class="btn" href="r.html?id=${encodeURIComponent(sid)}">전체 결과 보기 →</a></p>` : ''}
     <p class="note center">이 결과는 이 기기에서만 보입니다. 참여해 주셔서 감사합니다.</p>
     ${session.phase === 'post' ? '<p class="center"><button id="reset" class="btn">다른 사람이 이 기기로 응답하기</button></p>' : ''}`;

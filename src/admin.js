@@ -5,12 +5,13 @@ import { CONFIGURED } from './firebase-config.js';
 import {
   SCALES, TEMPLATES, DEFAULT_SAT, DEFAULT_OPEN_PRE, DEFAULT_OPEN_POST, PHASES,
   parseItems, itemsToText, esc, fmt, respondUrl, resultUrl,
+  DEFAULT_TITLES, titlesOf, DEFAULT_INFO_CHOICE, DEFAULT_INFO_TEXT, parseChoices, choicesToText, isEtc,
 } from './common.js';
 import { analyze, publicSummary } from './analysis.js';
-import { summaryView, testLine, itemTable, openView } from './render.js';
+import { summaryView, testLine, itemTable, openView, infoView } from './render.js';
 import { mean } from './stats.js';
 
-export const VERSION = 'v0.1.0';
+export const VERSION = 'v0.2.0';
 const ADMINS = ['youngpeace@gmail.com']; // firestore.rules의 목록과 같게 유지
 
 const root = document.getElementById('root');
@@ -107,6 +108,8 @@ function defaults() {
   const t = TEMPLATES[0];
   return {
     owner: user.uid, title: '새 교육', date: today(), instructor: '', scale: 'L5',
+    titles: { ...DEFAULT_TITLES },
+    infoChoice: parseChoices(DEFAULT_INFO_CHOICE.join('\n'), 'c'), infoText: parseItems(DEFAULT_INFO_TEXT.join('\n'), 't'),
     items: parseItems(t.items.join('\n'), 'e'), retro: false,
     sat: parseItems(DEFAULT_SAT.join('\n'), 's'),
     openPre: parseItems(DEFAULT_OPEN_PRE.join('\n'), 'a'),
@@ -272,7 +275,7 @@ function drawResult(el) {
     <div class="print-only"><h1 style="margin:0 0 4px;font-size:18pt">${esc(d.title)} — 교육 전후 효능감 분석</h1>
       <p class="note">${esc([d.date, d.instructor].filter(Boolean).join(' · '))} · 척도 ${SCALES[d.scale]?.name} · 출력 ${new Date().toLocaleString('ko-KR')}</p></div>
     <div class="card">
-      ${r.nPaired ? summaryView({ ...r, locked: false }) : `<div class="empty">사전·사후 모두 응답한 인원이 아직 없습니다.<br>(사전 ${r.nPre}명 · 사후 ${r.nPost}명)</div>`}
+      ${r.nPaired ? summaryView({ ...r, locked: false }, { titles: titlesOf(d) }) : `<div class="empty">사전·사후 모두 응답한 인원이 아직 없습니다.<br>(사전 ${r.nPre}명 · 사후 ${r.nPost}명)</div>`}
     </div>
     ${r.nPaired ? `<div class="card page-break"><h2>통계 검정</h2>
       ${testLine(r.overall)}
@@ -283,7 +286,8 @@ function drawResult(el) {
       ${r.retro && r.retro.n >= 2 ? `<h3>회고적 사전 평가 비교</h3>${testLine(r.retro)}
         ${r.retro.shift.n >= 2 ? `<p class="note">응답 이동(실제 사전 → 회고적 사전): ${testLine(r.retro.shift).replace(/<\/?p[^>]*>/g, '')}</p>` : ''}` : ''}
       <p class="note">¹ Cohen, J. (1988). <i>Statistical power analysis for the behavioral sciences</i> (2nd ed.). Lawrence Erlbaum.</p>
-    </div>` : ''}`;
+    </div>` : ''}
+    ${r.infoChoice.length ? `<div class="card"><h2>${esc(titlesOf(d).info)}별 결과</h2>${infoView(r)}</div>` : ''}`;
   el.querySelector('#print').onclick = () => window.print();
   el.querySelector('#csv').onclick = downloadCsv;
 }
@@ -293,7 +297,8 @@ function downloadCsv() {
   const pre = new Map(), post = new Map();
   cur.responses.forEach((r) => (r.phase === 'pre' ? pre : post).set(r.key, r));
   const keys = [...new Set([...pre.keys(), ...post.keys()])];
-  const head = ['응답키', '사전', '사후',
+  const infoQs = [...(d.infoChoice || []).flatMap((q) => [q, ...(q.options || []).some(isEtc) ? [{ id: `${q.id}_etc`, text: `${q.text}(직접입력)` }] : []]), ...(d.infoText || [])];
+  const head = ['응답키', '사전', '사후', ...infoQs.map((q) => `정보_${q.id}`),
     ...items.map((i) => `사전_${i.id}`), ...items.map((i) => `사후_${i.id}`),
     ...(d.retro ? items.map((i) => `회고사전_${i.id}`) : []),
     ...(d.sat || []).map((s) => `만족_${s.id}`),
@@ -303,14 +308,15 @@ function downloadCsv() {
   const rows = keys.map((k) => {
     const a = pre.get(k), b = post.get(k);
     const pa = avg(a?.eff), pb = avg(b?.eff);
-    return [k, a ? 1 : 0, b ? 1 : 0,
+    const inf = { ...(b?.info || {}), ...(a?.info || {}) };
+    return [k, a ? 1 : 0, b ? 1 : 0, ...infoQs.map((q) => inf[q.id] ?? ''),
       ...items.map((i) => a?.eff?.[i.id] ?? ''), ...items.map((i) => b?.eff?.[i.id] ?? ''),
       ...(d.retro ? items.map((i) => b?.retro?.[i.id] ?? '') : []),
       ...(d.sat || []).map((s) => b?.sat?.[s.id] ?? ''),
       ...(d.openPre || []).map((q) => a?.open?.[q.id] ?? ''), ...(d.openPost || []).map((q) => b?.open?.[q.id] ?? ''),
       pa === '' ? '' : pa.toFixed(3), pb === '' ? '' : pb.toFixed(3), pa !== '' && pb !== '' ? (pb - pa).toFixed(3) : ''];
   });
-  const legendRows = [[], ['문항ID', '요인', '문항'], ...items.map((i) => [i.id, i.factor, i.text]), ...(d.sat || []).map((s) => [s.id, '만족도', s.text]),
+  const legendRows = [[], ['문항ID', '요인', '문항'], ...infoQs.map((q) => [q.id, '참여자 정보', q.text]), ...items.map((i) => [i.id, i.factor, i.text]), ...(d.sat || []).map((s) => [s.id, '만족도', s.text]),
     ...(d.openPre || []).map((q) => [q.id, '사전 주관식', q.text]), ...(d.openPost || []).map((q) => [q.id, '사후 주관식', q.text])];
   const cell = (v) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const csv = '﻿' + [head, ...rows, ...legendRows].map((r) => r.map(cell).join(',')).join('\r\n');
@@ -324,7 +330,7 @@ function downloadCsv() {
 // ── 주관식 탭 ──
 function drawOpen(el) {
   const r = cur.res;
-  const html = openView(r.openPre, '사전') + openView(r.openPost, '사후');
+  const html = openView(r.infoText, titlesOf(cur.data).info) + openView(r.openPre, '사전') + openView(r.openPost, '사후');
   el.innerHTML = `<div class="card"><h2>주관식 응답</h2><p class="note">핵심어는 응답에 함께 나온 낱말의 단순 빈도입니다(조사 일부 제거). 해석 시 원문을 함께 확인하십시오.</p>${html || '<div class="empty">주관식 문항이 없습니다.</div>'}</div>`;
 }
 
@@ -339,9 +345,19 @@ function drawSetup(el) {
       <label>강사·주관</label><input class="inp" id="f-inst" value="${esc(d.instructor)}" placeholder="예: 교육혁신팀" />
       <label>공개 최소 인원</label><div><input class="inp" id="f-minn" type="number" min="3" max="30" value="${d.minN || 5}" style="max-width:100px" /> <span class="note">짝지어진 응답이 이 인원 미만이면 교육생에게 집계를 보이지 않음</span></div>
     </div></div>
+  <div class="card"><h2>참여자 정보</h2>
+    <div class="form-grid">
+      <label>화면 표시 이름</label><input class="inp title-inp" id="t-info" value="${esc(titlesOf(d).info)}" />
+      <label>객관식</label><div><textarea class="ta" id="f-ichoice" rows="4" placeholder="소속 | 교원, 직원, 기타*">${esc(choicesToText(d.infoChoice))}</textarea>
+        <p class="note">한 줄에 한 문항 · <b>질문 | 보기1, 보기2, …</b> 형식(보기는 쉼표로 구분) · 보기 끝에 <b>*</b>를 붙이면 ‘직접입력’ 보기가 됩니다(예: <b>기타*</b>).<br>객관식은 필수 응답이며, 결과 탭에서 보기별 효능감 변화가 함께 분석됩니다.</p></div>
+      <label>주관식</label><div><textarea class="ta" id="f-itext" rows="2" placeholder="예: 소속 부서">${esc(itemsToText(d.infoText))}</textarea>
+        <p class="note">한 줄에 한 문항 · 선택 응답 · 이름·연락처 등 개인 식별정보는 묻지 않는 것을 권장합니다.</p></div>
+    </div>
+    <p class="note">참여자 정보는 사전 설문에서 묻고, 사전 응답이 없는 사람에게만 사후 설문에서 묻습니다. 비워 두면 묻지 않습니다.</p></div>
   <div class="card"><h2>효능감 문항</h2>
     ${locked ? '<p class="note" style="color:var(--danger)">응답이 들어온 뒤에는 척도·효능감 문항·회고 설정을 바꿀 수 없습니다. (바꾸려면 ‘복제’ 후 새 교육으로)</p>' : ''}
     <div class="form-grid">
+      <label>화면 표시 이름</label><input class="inp title-inp" id="t-eff" value="${esc(titlesOf(d).eff)}" />
       <label>척도</label><select class="sel" id="f-scale" style="max-width:260px" ${locked ? 'disabled' : ''}>${Object.entries(SCALES).map(([k, s]) => `<option value="${k}" ${d.scale === k ? 'selected' : ''}>${s.name}</option>`).join('')}</select>
       <label>예시 문항</label><div class="btn-row"><select class="sel" id="f-tpl" style="max-width:320px" ${locked ? 'disabled' : ''}><option value="">— 예시 불러오기 —</option>${TEMPLATES.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></div>
       <label>문항</label><div><textarea class="ta" id="f-items" rows="8" ${locked ? 'disabled' : ''}>${esc(itemsToText(d.items))}</textarea>
@@ -350,6 +366,7 @@ function drawSetup(el) {
     </div></div>
   <div class="card"><h2>만족도·주관식</h2>
     <div class="form-grid">
+      <label>화면 표시 이름</label><div class="btn-row"><span class="note">만족도</span><input class="inp title-inp" id="t-sat" value="${esc(titlesOf(d).sat)}" /><span class="note">주관식</span><input class="inp title-inp" id="t-open" value="${esc(titlesOf(d).open)}" /></div>
       <label>만족도(사후, 5점)</label><textarea class="ta" id="f-sat" rows="4">${esc(itemsToText(d.sat))}</textarea>
       <label>사전 주관식</label><textarea class="ta" id="f-opre" rows="2">${esc(itemsToText(d.openPre))}</textarea>
       <label>사후 주관식</label><textarea class="ta" id="f-opost" rows="3">${esc(itemsToText(d.openPost))}</textarea>
@@ -369,7 +386,11 @@ function drawSetup(el) {
       title: v('#f-title').trim() || '제목 없음', date: v('#f-date'), instructor: v('#f-inst').trim(),
       minN: Math.max(3, Math.min(30, parseInt(v('#f-minn'), 10) || 5)),
       sat: parseItems(v('#f-sat'), 's'), openPre: parseItems(v('#f-opre'), 'a'), openPost: parseItems(v('#f-opost'), 'b'),
+      infoChoice: parseChoices(v('#f-ichoice'), 'c'), infoText: parseItems(v('#f-itext'), 't'),
+      titles: Object.fromEntries(['info', 'eff', 'sat', 'open'].map((k) => [k, v(`#t-${k}`).trim() || DEFAULT_TITLES[k]])),
     };
+    const bad = patch.infoChoice.find((q) => q.options.length < 2);
+    if (bad) return toast(`‘${bad.text}’ 문항의 보기를 2개 이상 입력하십시오. (질문 | 보기1, 보기2)`);
     if (!locked) {
       patch.scale = v('#f-scale');
       patch.items = parseItems(v('#f-items'), 'e');
@@ -439,7 +460,7 @@ async function drawPresent(force = false) {
           <div class="code-help">응답 코드(6자리) = <b>생일 월·일 4자리 + 휴대폰 끝 2자리</b><br>예) 3월 7일생, 끝자리 45 → <b>030745</b><br><span class="note">교육 전·후에 같은 코드를 입력해야 비교됩니다.</span></div></div></div>`;
     qrCanvas(respondUrl(cur.id), 900).then((c) => present.querySelector('#p-qr')?.replaceChildren(c));
   } else {
-    present.innerHTML = `${bar}${r.nPaired ? summaryView({ ...r, locked: false }, { title: '교육 전후 효능감 변화', big: true }) + `<div class="summary big">${testLine(r.overall)}</div>` : '<div class="empty" style="font-size:22px">사전·사후 모두 응답한 인원이 아직 없습니다.</div>'}`;
+    present.innerHTML = `${bar}${r.nPaired ? summaryView({ ...r, locked: false }, { title: `교육 전후 ${titlesOf(d).eff} 변화`, big: true, titles: titlesOf(d) }) + `<div class="summary big">${testLine(r.overall)}</div>` : '<div class="empty" style="font-size:22px">사전·사후 모두 응답한 인원이 아직 없습니다.</div>'}`;
   }
   present.querySelectorAll('[data-pt]').forEach((b) => (b.onclick = () => { presentTab = b.dataset.pt; drawPresent(true); }));
   present.querySelector('#p-close').onclick = closePresent;
