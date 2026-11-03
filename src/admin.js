@@ -5,13 +5,13 @@ import { CONFIGURED } from './firebase-config.js';
 import {
   SCALES, TEMPLATES, DEFAULT_SAT, DEFAULT_OPEN_PRE, DEFAULT_OPEN_POST, PHASES,
   parseItems, itemsToText, esc, fmt, respondUrl, resultUrl,
-  DEFAULT_TITLES, titlesOf, DEFAULT_INFO_CHOICE, DEFAULT_INFO_TEXT, parseChoices, choicesToText, isEtc, WHEN,
+  DEFAULT_TITLES, titlesOf, DEFAULT_INFO_CHOICE, DEFAULT_INFO_TEXT, parseChoices, choicesToText, isEtc, WHEN, isLikert,
 } from './common.js';
 import { analyze, publicSummary } from './analysis.js';
 import { summaryView, testLine, itemTable, openView, infoView, choiceTables, groupNote } from './render.js';
 import { mean } from './stats.js';
 
-export const VERSION = 'v0.3.0';
+export const VERSION = 'v0.4.0';
 const ADMINS = ['youngpeace@gmail.com']; // firestore.rules의 목록과 같게 유지
 
 const root = document.getElementById('root');
@@ -111,7 +111,7 @@ function defaults() {
     titles: { ...DEFAULT_TITLES },
     infoChoice: parseChoices(DEFAULT_INFO_CHOICE.join('\n'), 'c'), infoText: parseItems(DEFAULT_INFO_TEXT.join('\n'), 't'),
     items: parseItems(t.items.join('\n'), 'e'), retro: false,
-    sat: parseItems(DEFAULT_SAT.join('\n'), 's'),
+    sat: parseChoices(DEFAULT_SAT.join('\n'), 's'),
     openPre: parseItems(DEFAULT_OPEN_PRE.join('\n'), 'a'),
     openPost: parseItems(DEFAULT_OPEN_POST.join('\n'), 'b'),
     phase: 'ready', showResults: false, minN: 5,
@@ -288,6 +288,7 @@ function drawResult(el) {
       <p class="note">¹ Cohen, J. (1988). <i>Statistical power analysis for the behavioral sciences</i> (2nd ed.). Lawrence Erlbaum.</p>
     </div>` : ''}
     ${r.infoChoice.length ? `<div class="card"><h2>${esc(titlesOf(d).info)}별 결과</h2>${infoView(r)}</div>` : ''}
+    ${r.satChoice.length ? `<div class="card"><h2>${esc(titlesOf(d).sat)} — 객관식</h2>${choiceTables(r, r.satChoice)}${groupNote}</div>` : ''}
     ${r.extra.filter((x) => x.phases.some((p) => p.choice.length)).map((x) => `<div class="card"><h2>${esc(x.title)}</h2>
       ${x.phases.filter((p) => p.choice.length).map((p) => `${x.phases.length > 1 ? `<h3>${p.label} 응답</h3>` : `<p class="note">${p.label} 설문 문항</p>`}${choiceTables(r, p.choice)}`).join('')}${groupNote}</div>`).join('')}`;
   el.querySelector('#print').onclick = () => window.print();
@@ -307,7 +308,7 @@ function downloadCsv() {
   const head = ['응답키', '사전', '사후', ...infoQs.map((q) => `정보_${q.id}`), ...extQs.map((q) => `기타_${q.id}`),
     ...items.map((i) => `사전_${i.id}`), ...items.map((i) => `사후_${i.id}`),
     ...(d.retro ? items.map((i) => `회고사전_${i.id}`) : []),
-    ...(d.sat || []).map((s) => `만족_${s.id}`),
+    ...(d.sat || []).flatMap((s) => [`만족_${s.id}`, ...((s.options || []).some(isEtc) ? [`만족_${s.id}_etc`] : [])]),
     ...(d.openPre || []).map((q) => `사전의견_${q.id}`), ...(d.openPost || []).map((q) => `사후의견_${q.id}`),
     '사전평균', '사후평균', '변화'];
   const avg = (o) => { const v = items.map((i) => o?.[i.id]).filter(Number.isFinite); return v.length ? mean(v) : ''; };
@@ -319,7 +320,7 @@ function downloadCsv() {
       ...extQs.map((q) => joinV((q.ph === 'pre' ? a : b)?.ext?.[q.set]?.[q.qid])),
       ...items.map((i) => a?.eff?.[i.id] ?? ''), ...items.map((i) => b?.eff?.[i.id] ?? ''),
       ...(d.retro ? items.map((i) => b?.retro?.[i.id] ?? '') : []),
-      ...(d.sat || []).map((s) => b?.sat?.[s.id] ?? ''),
+      ...(d.sat || []).flatMap((s) => [joinV(b?.sat?.[s.id]), ...((s.options || []).some(isEtc) ? [b?.sat?.[`${s.id}_etc`] ?? ''] : [])]),
       ...(d.openPre || []).map((q) => a?.open?.[q.id] ?? ''), ...(d.openPost || []).map((q) => b?.open?.[q.id] ?? ''),
       pa === '' ? '' : pa.toFixed(3), pb === '' ? '' : pb.toFixed(3), pa !== '' && pb !== '' ? (pb - pa).toFixed(3) : ''];
   });
@@ -358,7 +359,7 @@ function drawSetup(el) {
     <div class="form-grid">
       <label>화면 표시 이름</label><input class="inp title-inp" id="t-info" value="${esc(titlesOf(d).info)}" />
       <label>객관식</label><div><textarea class="ta auto" rows="1" id="f-ichoice" placeholder="소속 | 교원, 직원, 기타*">${esc(choicesToText(d.infoChoice))}</textarea>
-        <p class="note">한 줄에 한 문항 · <b>질문 | 보기1, 보기2, …</b> 형식(보기는 쉼표로 구분) · 보기 끝에 <b>*</b>를 붙이면 ‘직접입력’ 보기(예: <b>기타*</b>) · 질문 끝에 <b>(복수)</b>를 붙이면 복수 선택(예: <b>관심 분야(복수) | 수업, 연구, 행정</b>).<br>객관식은 필수 응답이며, 결과 탭에서 보기별 효능감 변화가 함께 분석됩니다.</p></div>
+        <p class="note">한 줄에 한 문항 · <b>질문 | 보기1, 보기2, …</b> 형식(보기는 쉼표로 구분) · 보기 끝에 <b>*</b>를 붙이면 ‘직접입력’ 보기(예: <b>기타*</b>) · 질문 끝에 <b>(복수)</b>를 붙이면 복수 선택(예: <b>관심 분야(복수) | 수업, 연구, 행정</b>)<br>· <b>‘|’ 없이 질문만</b> 쓰면 5점 척도(전혀 그렇지 않다~매우 그렇다) 문항이 됩니다.<br>객관식은 필수 응답이며, 결과 탭에서 보기별 효능감 변화가 함께 분석됩니다.</p></div>
       <label>주관식</label><div><textarea class="ta auto" rows="1" id="f-itext" placeholder="예: 소속 부서">${esc(itemsToText(d.infoText))}</textarea>
         <p class="note">한 줄에 한 문항 · 선택 응답 · 이름·연락처 등 개인 식별정보는 묻지 않는 것을 권장합니다.</p></div>
     </div>
@@ -379,11 +380,11 @@ function drawSetup(el) {
   <div class="card"><h2>만족도·주관식</h2>
     <div class="form-grid">
       <label>화면 표시 이름</label><div class="btn-row"><span class="note">만족도</span><input class="inp title-inp" id="t-sat" value="${esc(titlesOf(d).sat)}" /><span class="note">주관식</span><input class="inp title-inp" id="t-open" value="${esc(titlesOf(d).open)}" /></div>
-      <label>만족도(사후, 5점)</label><textarea class="ta auto" rows="1" id="f-sat">${esc(itemsToText(d.sat))}</textarea>
+      <label>만족도(사후)</label><textarea class="ta auto" rows="1" id="f-sat">${esc(choicesToText(d.sat))}</textarea>
       <label>사전 주관식</label><textarea class="ta auto" rows="1" id="f-opre">${esc(itemsToText(d.openPre))}</textarea>
       <label>사후 주관식</label><textarea class="ta auto" rows="1" id="f-opost">${esc(itemsToText(d.openPost))}</textarea>
     </div>
-    <p class="note">만족도·주관식은 비워 두면 묻지 않습니다. 응답이 들어온 뒤 문항 순서를 바꾸면 기존 응답과 어긋나므로 끝에 추가만 하십시오.</p></div>
+    <p class="note">만족도는 질문만 쓰면 5점 척도, <b>질문 | 보기1, 보기2</b>로 쓰면 객관식입니다(복수·직접입력 형식 동일). 만족도·주관식은 비워 두면 묻지 않습니다. 응답이 들어온 뒤 문항 순서를 바꾸면 기존 응답과 어긋나므로 끝에 추가만 하십시오.</p></div>
   <div class="btn-row" style="margin-top:14px"><button class="btn primary big" id="save">저장</button><span class="grow" style="flex:1"></span>
     <button class="btn" id="dup">복제</button><button class="btn danger" id="del">삭제</button></div>`;
 
@@ -415,7 +416,7 @@ function drawSetup(el) {
     const patch = {
       title: v('#f-title').trim() || '제목 없음', date: v('#f-date'), instructor: v('#f-inst').trim(),
       minN: Math.max(3, Math.min(30, parseInt(v('#f-minn'), 10) || 5)),
-      sat: parseItems(v('#f-sat'), 's'), openPre: parseItems(v('#f-opre'), 'a'), openPost: parseItems(v('#f-opost'), 'b'),
+      sat: parseChoices(v('#f-sat'), 's'), openPre: parseItems(v('#f-opre'), 'a'), openPost: parseItems(v('#f-opost'), 'b'),
       infoChoice: parseChoices(v('#f-ichoice'), 'c'), infoText: parseItems(v('#f-itext'), 't'),
       titles: Object.fromEntries(['info', 'eff', 'sat', 'open'].map((k) => [k, v(`#t-${k}`).trim() || DEFAULT_TITLES[k]])),
     };
@@ -423,7 +424,7 @@ function drawSetup(el) {
       id: c.dataset.xid, title: c.querySelector('.title-inp').value.trim() || '기타 문항', when: c.querySelector('.x-when').value,
       choice: parseChoices(c.querySelector('.x-choice').value, 'c'), text: parseItems(c.querySelector('.x-text').value, 't'),
     }));
-    const bad = [...patch.infoChoice, ...patch.extra.flatMap((x) => x.choice)].find((q) => q.options.length < 2);
+    const bad = [...patch.infoChoice, ...patch.sat, ...patch.extra.flatMap((x) => x.choice)].find((q) => !isLikert(q) && q.options.length < 2);
     if (bad) return toast(`‘${bad.text}’ 문항의 보기를 2개 이상 입력하십시오. (질문 | 보기1, 보기2)`);
     if (!locked) {
       patch.scale = v('#f-scale');
@@ -505,7 +506,7 @@ function extraCard(x, n) {
     <div class="form-grid">
       <label>화면 표시 이름</label><input class="inp title-inp" value="${esc(x.title || '기타 문항')}" />
       <label>실시 시점</label><select class="sel x-when" style="max-width:200px">${Object.entries(WHEN).map(([k, v]) => `<option value="${k}" ${x.when === k ? 'selected' : ''}>${v} 설문</option>`).join('')}</select>
-      <label>객관식</label><div><textarea class="ta auto x-choice" rows="1" placeholder="질문 | 보기1, 보기2, 기타*   (복수 선택: 질문(복수) | 보기…)">${esc(choicesToText(x.choice))}</textarea></div>
+      <label>객관식</label><div><textarea class="ta auto x-choice" rows="1" placeholder="질문 | 보기1, 보기2, 기타*  ·  복수 선택: 질문(복수) | 보기…  ·  질문만: 5점 척도">${esc(choicesToText(x.choice))}</textarea></div>
       <label>주관식</label><textarea class="ta auto x-text" rows="1" placeholder="한 줄에 한 문항">${esc(itemsToText(x.text))}</textarea>
     </div></div>`;
 }

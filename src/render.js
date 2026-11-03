@@ -130,7 +130,8 @@ export function openView(list, label) {
 export function choiceTables(s, list) {
   if (!list?.length) return '';
   const d = dec(s);
-  return list.map((q) => `
+  const lk = list.filter((q) => q.likert);
+  return (lk.length ? `<h4 class="info-q">5점 척도 문항</h4>${satTable(lk)}` : '') + list.filter((q) => !q.likert).map((q) => `
     <h4 class="info-q">${esc(q.text)} <small class="note">(응답 ${q.n}명${q.multi ? ' · 복수 선택, 비율 합계가 100%를 넘을 수 있음' : ''})</small></h4>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>보기</th><th>응답(비율)</th><th>짝 n</th><th>사전</th><th>사후</th><th>변화</th><th>d<sub>z</sub></th><th>t검정 p</th></tr></thead><tbody>
     ${q.options.map((o) => {

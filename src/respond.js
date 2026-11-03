@@ -2,7 +2,7 @@
 import './style.css';
 import './theme.js';
 import { CONFIGURED } from './firebase-config.js';
-import { SCALES, SAT_SCALE, scaleValues, validCode, codeKey, esc, fmt, fmtSigned, titlesOf, isEtc, optLabel } from './common.js';
+import { SCALES, SAT_SCALE, scaleValues, validCode, codeKey, esc, fmt, fmtSigned, titlesOf, isEtc, optLabel, isLikert } from './common.js';
 import { dumbbell, legend } from './render.js';
 import { mean } from './stats.js';
 
@@ -128,7 +128,8 @@ function choiceBlock(bk, title, choice, text) {
   if (!choice.length && !text.length) return '';
   const opt = (o) => `<button type="button" data-c="${esc(optLabel(o))}" ${isEtc(o) ? 'data-etc="1"' : ''}>${esc(optLabel(o))}${isEtc(o) ? '(직접입력)' : ''}</button>`;
   return `<div class="card" style="margin-top:10px"><h2>${esc(title)}</h2>
-    ${choice.map((q, i) => `<div class="q" data-ch="${bk}:${q.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(q.text)}${q.multi ? ' <small class="note">(복수 선택 가능)</small>' : ''}</div>
+    ${choice.map((q, i) => isLikert(q) ? `<div class="q" data-ch="${bk}:${q.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(q.text)}</div>${scaleHtml(`@${bk}:${q.id}`, SAT_SCALE)}</div>`
+      : `<div class="q" data-ch="${bk}:${q.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(q.text)}${q.multi ? ' <small class="note">(복수 선택 가능)</small>' : ''}</div>
       <div class="choices" data-bk="${bk}" data-id="${q.id}" ${q.multi ? 'data-multi="1"' : ''}>${q.options.map(opt).join('')}</div>
       <input class="inp etc-inp" data-etc-for="${bk}:${q.id}" maxlength="100" placeholder="직접 입력해 주십시오" hidden /></div>`).join('')}
     ${text.map((q, i) => `<div class="q"><div class="q-text"><span class="qn">${choice.length + i + 1}.</span>${esc(q.text)} <small class="note">(선택)</small></div>
@@ -141,7 +142,7 @@ function renderForm(key, needInfo) {
   const T = titlesOf(session);
   const ph = session.phase;
   const blocks = [];
-  const okQ = (qs) => (qs || []).filter((q) => q.options?.length);
+  const okQ = (qs) => (qs || []).filter((q) => q.text);
   if (needInfo) blocks.push({ bk: 'info', title: T.info, choice: okQ(session.infoChoice), text: session.infoText || [] });
   for (const x of session.extra || []) {
     if (x.when === ph || x.when === 'both') blocks.push({ bk: x.id, title: x.title || '기타 문항', choice: okQ(x.choice), text: x.text || [] });
@@ -149,11 +150,11 @@ function renderForm(key, needInfo) {
   const scale = SCALES[session.scale] || SCALES.L5;
   const retro = ph === 'post' && session.retro;
   const items = session.items || [];
-  const sat = ph === 'post' ? session.sat || [] : [];
+  if (ph === 'post' && session.sat?.length) blocks.push({ bk: 'sat', title: T.sat, choice: okQ(session.sat), text: [] });
   const opens = (ph === 'pre' ? session.openPre : session.openPost) || [];
   form = { key, ans: Object.fromEntries(blocks.map((b) => [b.bk, {}])), eff: {}, retro: {}, sat: {}, open: {} };
   const nChoice = blocks.reduce((n, b) => n + b.choice.length, 0);
-  const required = nChoice + items.length * (retro ? 2 : 1) + sat.length;
+  const required = nChoice + items.length * (retro ? 2 : 1);
 
   const intro = ph === 'pre'
     ? '각 문항에 대해 <b>지금 자신이 할 수 있다고 믿는 정도</b>를 골라 주십시오.'
@@ -163,7 +164,7 @@ function renderForm(key, needInfo) {
 
   root.innerHTML = `${head(ph === 'pre' ? '교육 전 설문' : '교육 후 설문')}
   <div class="progress"><i id="prog" style="width:0"></i></div>
-  ${blocks.map((b) => choiceBlock(b.bk, b.title, b.choice, b.text)).join('')}
+  ${blocks.filter((b) => b.bk !== 'sat').map((b) => choiceBlock(b.bk, b.title, b.choice, b.text)).join('')}
   <div class="card" style="margin-top:10px">
     <h2>${esc(T.eff)}</h2><p class="note">${intro}</p>
     ${items.map((it, i) => `<div class="q" data-q="eff:${it.id}${retro ? `,retro:${it.id}` : ''}">
@@ -172,19 +173,17 @@ function renderForm(key, needInfo) {
       ${scaleHtml(`eff:${it.id}`, scale)}
     </div>`).join('')}
   </div>
-  ${sat.length ? `<div class="card"><h2>${esc(T.sat)}</h2>
-    ${sat.map((it, i) => `<div class="q" data-q="sat:${it.id}"><div class="q-text"><span class="qn">${i + 1}.</span>${esc(it.text)}</div>${scaleHtml(`sat:${it.id}`, SAT_SCALE)}</div>`).join('')}
-  </div>` : ''}
+  ${blocks.filter((b) => b.bk === 'sat').map((b) => choiceBlock(b.bk, b.title, b.choice, b.text)).join('')}
   ${opens.length ? `<div class="card"><h2>${esc(T.open)} <small class="note">(선택)</small></h2>
     ${opens.map((q) => `<div class="q"><div class="q-text">${esc(q.text)}</div><textarea class="ta auto" data-open="${q.id}" maxlength="1000" rows="2"></textarea></div>`).join('')}
   </div>` : ''}
   <div class="sticky-submit"><button id="submit" class="btn primary big">제출하기 (<span id="cnt">0</span>/${required})</button></div>
   <p class="note center">응답 코드는 암호화된 형태로만 저장되며 이름 등 개인 식별정보는 수집하지 않습니다.</p>`;
 
-  const chosen = (bk, id) => { const v = form.ans[bk][id]; return Array.isArray(v) ? v.length > 0 : !!v; };
+  const chosen = (bk, id) => { const v = form.ans[bk][id]; return Array.isArray(v) ? v.length > 0 : v !== undefined && v !== ''; };
   const update = () => {
     const nc = blocks.reduce((n, b) => n + b.choice.filter((q) => chosen(b.bk, q.id)).length, 0);
-    const done = nc + Object.keys(form.eff).length + Object.keys(form.retro).length + Object.keys(form.sat).length;
+    const done = nc + Object.keys(form.eff).length + Object.keys(form.retro).length;
     root.querySelector('#cnt').textContent = done;
     root.querySelector('#prog').style.width = `${(done / Math.max(1, required)) * 100}%`;
   };
@@ -193,7 +192,8 @@ function renderForm(key, needInfo) {
       const b = e.target.closest('button[data-v]');
       if (!b) return;
       const [grp, id] = el.dataset.name.split(':');
-      form[grp][id] = Number(b.dataset.v);
+      if (grp.startsWith('@')) form.ans[grp.slice(1)][id] = Number(b.dataset.v); // 참여자 정보·기타·만족도의 5점 척도
+      else form[grp][id] = Number(b.dataset.v);
       el.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x === b));
       el.closest('.q')?.classList.remove('missing');
       update();
@@ -241,8 +241,9 @@ async function submit(required) {
     if (q.dataset.ch) {
       const [bk, id] = q.dataset.ch.split(':');
       const v = form.ans[bk][id];
-      const etcOn = !root.querySelector(`[data-etc-for="${bk}:${id}"]`)?.hidden;
-      return !(Array.isArray(v) ? v.length : v) || (etcOn && !form.ans[bk][`${id}_etc`]);
+      const etcEl = root.querySelector(`[data-etc-for="${bk}:${id}"]`);
+      const etcOn = !!etcEl && !etcEl.hidden;
+      return !(Array.isArray(v) ? v.length : v !== undefined && v !== '') || (etcOn && !form.ans[bk][`${id}_etc`]);
     }
     return q.dataset.q.split(',').some((k) => { const [g, id] = k.split(':'); return !Number.isFinite(form[g][id]); });
   });
@@ -254,13 +255,14 @@ async function submit(required) {
   const ph = session.phase;
   const btn = root.querySelector('#submit');
   btn.disabled = true;
-  const clean = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => (Array.isArray(v) ? v.length : v)));
+  const clean = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => (Array.isArray(v) ? v.length : v !== undefined && v !== '')));
   const open = clean(form.open);
   const info = clean(form.ans.info);
-  const ext = Object.fromEntries(Object.entries(form.ans).filter(([k]) => k !== 'info').map(([k, v]) => [k, clean(v)]));
+  const sat = clean(form.ans.sat);
+  const ext = Object.fromEntries(Object.entries(form.ans).filter(([k]) => k !== 'info' && k !== 'sat').map(([k, v]) => [k, clean(v)]));
   try {
     await fb.setDoc(fb.doc(fb.db, 'sessions', sid, 'responses', `${ph}_${form.key}`), {
-      phase: ph, key: form.key, info, ext, eff: form.eff, retro: form.retro, sat: form.sat, open, at: fb.serverTimestamp(),
+      phase: ph, key: form.key, info, ext, eff: form.eff, retro: form.retro, sat, open, at: fb.serverTimestamp(),
     });
     local.set({ [ph]: { eff: form.eff, retro: form.retro } });
     window.scrollTo(0, 0);

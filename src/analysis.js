@@ -1,6 +1,6 @@
 // 응답 → 분석 결과 (관리 화면·발표 모드·공개 결과·개인 카드가 함께 사용)
 import { mean, sd, pairedT, wilcoxon } from './stats.js';
-import { SCALES, optLabel, isEtc } from './common.js';
+import { SCALES, optLabel, isEtc, isLikert } from './common.js';
 
 const personMean = (answers, items) => {
   const v = items.map((it) => answers?.[it.id]).filter((x) => Number.isFinite(x));
@@ -54,7 +54,7 @@ export function analyze(session, responses) {
     retro = { ...compare(rp), items: items2, shift: compare(shiftPairs) };
   }
 
-  const sat = (session.sat || []).map((it) => {
+  const sat = (session.sat || []).filter(isLikert).map((it) => {
     const v = [...post.values()].map((r) => r.sat?.[it.id]).filter((x) => Number.isFinite(x));
     return { id: it.id, text: it.text, n: v.length, mean: mean(v), sd: sd(v), pos: v.length ? v.filter((x) => x >= 4).length / v.length : NaN };
   });
@@ -67,7 +67,12 @@ export function analyze(session, responses) {
   // 객관식·주관식 집계 (복수 선택은 배열로 저장)
   const has = (v, label) => (Array.isArray(v) ? v.includes(label) : v === label);
   const filled = (v) => (Array.isArray(v) ? v.length > 0 : !!v);
+  const likertStat = (q, get, keys) => {
+    const v = keys.map((k) => get(k)?.[q.id]).filter((x) => Number.isFinite(x));
+    return { id: q.id, text: q.text, likert: true, n: v.length, mean: mean(v), sd: sd(v), pos: v.length ? v.filter((x) => x >= 4).length / v.length : NaN };
+  };
   const choiceStats = (qs, get, keys) => (qs || []).map((q) => {
+    if (isLikert(q)) return likertStat(q, get, keys);
     const answered = keys.filter((k) => filled(get(k)?.[q.id]));
     const etcTexts = answered.map((k) => (get(k)?.[`${q.id}_etc`] || '').trim()).filter(Boolean);
     const options = (q.options || []).map((raw) => {
@@ -101,8 +106,11 @@ export function analyze(session, responses) {
     return { id: x.id, title: x.title || '기타 문항', phases };
   });
 
+  // 만족도 중 객관식 문항
+  const satChoice = choiceStats((session.sat || []).filter((q) => !isLikert(q)), (k) => post.get(k)?.sat, [...post.keys()]);
+
   return {
-    infoChoice, infoText, extra,
+    infoChoice, infoText, extra, satChoice,
     scale: session.scale || 'L5',
     scaleMin: scale.min, scaleMax: scale.max,
     nPre: pre.size, nPost: post.size, nPaired: pairedKeys.length,
