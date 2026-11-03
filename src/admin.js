@@ -12,7 +12,7 @@ import { summaryView, testLine, itemTable, openView, infoView, choiceTables, gro
 import { mean } from './stats.js';
 import { makeTestResponses, isTestKey } from './testdata.js';
 
-export const VERSION = 'v0.6.1';
+export const VERSION = 'v0.6.2';
 const ADMINS = ['youngpeace@gmail.com']; // firestore.rules의 목록과 같게 유지
 
 const root = document.getElementById('root');

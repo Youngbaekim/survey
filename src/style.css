@@ -190,6 +190,18 @@ h1, h2, h3, h4 { line-height: 1.35; }
 .open-list { margin: 0; padding-left: 1.2em; font-size: 14px; }
 .open-list li { padding: 3px 0; border-bottom: 1px dashed var(--line); }
 
+/* ── 응답 비율 가로 막대 ── */
+.hbars { display: grid; gap: 6px; margin: 8px 0 10px; padding: 12px 14px; background: var(--bg); border-radius: 10px; }
+.hbar-row { display: grid; grid-template-columns: minmax(90px, 200px) 1fr 104px; gap: 10px; align-items: center; font-size: 13.5px; }
+.hbar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbar-label small { color: var(--soft); }
+.hbar-track { height: 16px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.hbar-track i { display: block; height: 100%; background: var(--post); border-radius: 4px; }
+.hbar-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--soft); white-space: nowrap; }
+.hbar-val b { color: var(--ink); }
+@media (max-width: 640px) { .hbar-row { grid-template-columns: 1fr 88px; } .hbar-label { grid-column: 1 / -1; } }
+@media print { .hbars, .hbar-row { break-inside: avoid; } }
+
 /* ── 응답자 카드 ── */
 .plist { display: grid; gap: 8px; }
 .pcard { background: var(--pane); border: 1px solid var(--line); border-radius: 12px; }

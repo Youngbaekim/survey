@@ -126,6 +126,15 @@ export function openView(list, label) {
     </div>`).join('');
 }
 
+/** 보기별 응답 비율 가로 막대 그래프 */
+export function hbars(q) {
+  if (!q.n) return '';
+  return `<div class="hbars">${q.options.map((o) => `<div class="hbar-row">
+    <span class="hbar-label">${esc(o.label)}${o.etc ? ' <small>(직접입력)</small>' : ''}</span>
+    <span class="hbar-track"><i style="width:${((o.pct || 0) * 100).toFixed(1)}%"></i></span>
+    <span class="hbar-val"><b>${pct(o.pct)}</b> ${o.count}명</span></div>`).join('')}</div>`;
+}
+
 /** 관리자용: 객관식 보기별 응답 분포와 효능감 변화 */
 export function choiceTables(s, list) {
   if (!list?.length) return '';
@@ -133,10 +142,11 @@ export function choiceTables(s, list) {
   const lk = list.filter((q) => q.likert);
   return (lk.length ? `<h4 class="info-q">5점 척도 문항</h4>${satTable(lk)}` : '') + list.filter((q) => !q.likert).map((q) => `
     <h4 class="info-q">${esc(q.text)} <small class="note">(응답 ${q.n}명${q.multi ? ' · 복수 선택, 비율 합계가 100%를 넘을 수 있음' : ''})</small></h4>
+    ${hbars(q)}
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>보기</th><th>응답(비율)</th><th>짝 n</th><th>사전</th><th>사후</th><th>변화</th><th>d<sub>z</sub></th><th>t검정 p</th></tr></thead><tbody>
     ${q.options.map((o) => {
       const c = o.change;
-      return `<tr><td>${esc(o.label)}${o.etc ? ' <small>(직접입력)</small>' : ''}</td><td class="num"><span class="pbar"><i style="width:${(o.pct || 0) * 100}%"></i></span>${o.count} (${pct(o.pct)})</td><td class="num">${c.n}</td>
+      return `<tr><td>${esc(o.label)}${o.etc ? ' <small>(직접입력)</small>' : ''}</td><td class="num">${o.count} (${pct(o.pct)})</td><td class="num">${c.n}</td>
         <td class="num">${fmt(c.pre, d)}</td><td class="num">${fmt(c.post, d)}</td><td class="num">${fmtSigned(c.diff, d)}</td>
         <td class="num">${c.n >= 2 ? fmt(c.dz) : '-'}</td><td class="num">${c.n >= 2 ? fmtP(c.p).replace('p ', '') : '-'}</td></tr>`;
     }).join('')}</tbody></table></div>
