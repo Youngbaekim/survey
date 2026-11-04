@@ -1,5 +1,5 @@
 // 응답 → 분석 결과 (관리 화면·발표 모드·공개 결과·개인 카드가 함께 사용)
-import { mean, sd, pairedT, wilcoxon } from './stats.js';
+import { mean, sd, pairedT, wilcoxon, mannWhitney, kruskal } from './stats.js';
 import { SCALES, optLabel, isEtc, isLikert } from './common.js';
 
 const personMean = (answers, items) => {
@@ -109,7 +109,54 @@ export function analyze(session, responses) {
   // 만족도 중 객관식 문항
   const satChoice = choiceStats((session.sat || []).filter((q) => !isLikert(q)), (k) => post.get(k)?.sat, [...post.keys()]);
 
+  // ── (교차) 교차분석: 사전에 응답한 객관식을 집단 기준으로 효능감 변화·만족도를 나눠 봄 ──
+  const MIN_N = 5;
+  const satLik = (session.sat || []).filter(isLikert);
+  const satCh = (session.sat || []).filter((q) => !isLikert(q));
+  const pairsFor = (keys, sel) => keys.filter((k) => pre.has(k) && post.has(k))
+    .map((k) => [personMean(pre.get(k).eff, sel), personMean(post.get(k).eff, sel)]).filter((p) => p.every(Number.isFinite));
+  const crossDefs = [], crossSkipped = [];
+  (session.infoChoice || []).filter((q) => q.cross && !isLikert(q)).forEach((q) => crossDefs.push({ src: 'info', q, get: infoOf }));
+  (session.extra || []).forEach((x) => (x.choice || []).filter((q) => q.cross && !isLikert(q)).forEach((q) => {
+    if (x.when === 'post') crossSkipped.push(`${x.title} · ${q.text}`);
+    else crossDefs.push({ src: x.title || '기타 문항', q, get: (k) => pre.get(k)?.ext?.[x.id] });
+  }));
+  const cross = crossDefs.map(({ src, q, get }) => {
+    const groups = (q.options || []).map((raw) => {
+      const label = optLabel(raw);
+      const keys = allKeys.filter((k) => has(get(k)?.[q.id], label));
+      const pairs = pairsFor(keys, items);
+      const postKeys = keys.filter((k) => post.has(k));
+      const sat = satLik.map((it) => {
+        const v = postKeys.map((k) => post.get(k).sat?.[it.id]).filter(Number.isFinite);
+        return { id: it.id, text: it.text, n: v.length, mean: mean(v), pos: v.length ? v.filter((x) => x >= 4).length / v.length : NaN };
+      });
+      const satChoice = satCh.map((sq) => {
+        const ans = postKeys.map((k) => post.get(k).sat?.[sq.id]).filter(filled);
+        return { id: sq.id, text: sq.text, n: ans.length, options: (sq.options || []).map((o) => { const l = optLabel(o); const c = ans.filter((v) => has(v, l)).length; return { label: l, count: c, pct: ans.length ? c / ans.length : NaN }; }) };
+      });
+      return {
+        label, etc: isEtc(raw), n: keys.length, nPost: postKeys.length,
+        overall: compare(pairs), diffs: pairs.map((p) => p[1] - p[0]),
+        factors: factorNames.map((f) => ({ name: f, ...compare(pairsFor(keys, items.filter((i) => i.factor === f))) })),
+        items: items.map((it) => ({ id: it.id, text: it.text, ...compare(pairsFor(keys, [it])) })),
+        sat, satChoice,
+      };
+    });
+    // 집단 간 변화량 차이 검정: 단일 선택 + 짝 n ≥ 5인 집단이 2개 이상일 때만
+    let test = null, testNote = '';
+    const elig = groups.filter((g) => g.overall.n >= MIN_N);
+    if (q.multi) testNote = '복수 선택 문항은 한 사람이 여러 집단에 속해 집단 간 검정을 하지 않습니다(기술통계만).';
+    else if (elig.length < 2) testNote = `짝 n ≥ ${MIN_N}인 집단이 2개 미만이라 집단 간 검정을 하지 않습니다.`;
+    else {
+      test = elig.length === 2 ? mannWhitney(elig[0].diffs, elig[1].diffs) : kruskal(elig.map((g) => g.diffs));
+      test.groups = elig.map((g) => g.label);
+    }
+    return { src, id: q.id, text: q.text, multi: !!q.multi, minN: MIN_N, groups, test, testNote };
+  });
+
   return {
+    cross, crossSkipped,
     infoChoice, infoText, extra, satChoice,
     scale: session.scale || 'L5',
     scaleMin: scale.min, scaleMax: scale.max,

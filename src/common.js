@@ -117,7 +117,7 @@ export const DEFAULT_INFO_CHOICE = ['소속 | 교원, 직원, 기타*'];
 export const DEFAULT_INFO_TEXT = [];
 
 /** 객관식 편집칸('질문 | 보기1, 보기2, …' 한 줄에 한 문항, 질문 끝에 (복수) → 복수 선택, '|' 없이 질문만 → 5점 척도) → 문항 배열 */
-const MULTI = /\s*\(복수\)\s*$/;
+const FLAG = /\s*\((복수|교차)\)\s*$/; // 질문 끝 표시: (복수) 복수 선택, (교차) 교차분석 기준
 export function parseChoices(text, prefix = 'c') {
   return text
     .split('\n')
@@ -126,16 +126,16 @@ export function parseChoices(text, prefix = 'c') {
     .map((line, i) => {
       const k = line.indexOf('|');
       let q = (k >= 0 ? line.slice(0, k) : line).trim();
-      const multi = MULTI.test(q);
-      if (multi) q = q.replace(MULTI, '');
-      if (k < 0) return { id: `${prefix}${i + 1}`, text: q, options: [], likert: true };
+      let multi = false, cross = false, m;
+      while ((m = q.match(FLAG))) { if (m[1] === '복수') multi = true; else cross = true; q = q.slice(0, m.index).trim(); }
+      if (k < 0) return { id: `${prefix}${i + 1}`, text: q, options: [], likert: true }; // 5점 척도에는 (교차) 미적용
       const options = [...new Set(line.slice(k + 1).split(',').map((o) => o.trim()).filter(Boolean))];
-      return { id: `${prefix}${i + 1}`, text: q, options, multi };
+      return { id: `${prefix}${i + 1}`, text: q, options, multi, cross };
     });
 }
 /** 5점 척도 문항 여부 (보기가 없으면 5점 척도 — 예전 만족도 문항 포함) */
 export const isLikert = (q) => !q.options?.length;
-export const choicesToText = (qs = []) => qs.map((q) => (isLikert(q) ? q.text : `${q.text}${q.multi ? '(복수)' : ''} | ${q.options.join(', ')}`)).join('\n');
+export const choicesToText = (qs = []) => qs.map((q) => (isLikert(q) ? q.text : `${q.text}${q.multi ? '(복수)' : ''}${q.cross ? '(교차)' : ''} | ${q.options.join(', ')}`)).join('\n');
 export const WHEN = { pre: '사전', post: '사후', both: '사전·사후' };
 // 보기 끝에 * → '직접입력' 보기 (예: 기타*)
 export const isEtc = (o) => /\*$/.test(o);

@@ -85,7 +85,8 @@ export function pairedT(pre, post) {
 
 /** 순위 (동점은 평균 순위) */
 function rank(a) {
-  const idx = a.map((v, i) => [v, i]).sort((x, y) => x[0] - y[0]);
+  // 평균 계산의 부동소수점 오차(예: 0.6000000000000001)로 동점을 놓치지 않도록 반올림 후 순위 매김
+  const idx = a.map((v, i) => [Math.round(v * 1e9) / 1e9, i]).sort((x, y) => x[0] - y[0]);
   const r = new Array(a.length);
   const ties = [];
   for (let i = 0; i < idx.length;) {
@@ -150,4 +151,89 @@ export function fmtP(p) {
   if (!Number.isFinite(p)) return '-';
   if (p < 0.001) return 'p < .001';
   return 'p = ' + p.toFixed(3).replace(/^0/, '');
+}
+
+// ── 집단 간 비교 (독립 표본) ──
+
+/** 정규화 하측 불완전 감마 P(a, x) */
+function gammaP(a, x) {
+  if (x <= 0) return 0;
+  const gln = lgamma(a);
+  if (x < a + 1) {
+    let ap = a, sum = 1 / a, del = sum;
+    for (let n = 0; n < 500; n++) { ap += 1; del *= x / ap; sum += del; if (Math.abs(del) < Math.abs(sum) * 3e-15) break; }
+    return sum * Math.exp(-x + a * Math.log(x) - gln);
+  }
+  let b = x + 1 - a, c = 1 / 1e-300, d = 1 / b, h = d;
+  for (let i = 1; i < 500; i++) {
+    const an = -i * (i - a);
+    b += 2;
+    d = an * d + b; if (Math.abs(d) < 1e-300) d = 1e-300;
+    c = b + an / c; if (Math.abs(c) < 1e-300) c = 1e-300;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 3e-15) break;
+  }
+  return 1 - Math.exp(-x + a * Math.log(x) - gln) * h;
+}
+/** 카이제곱 상측 확률 */
+export const chi2Sf = (x, df) => 1 - gammaP(df / 2, x / 2);
+
+/**
+ * Mann-Whitney U 검정 (양측)
+ * - 동점이 없고 두 집단 합 ≤ 50: 정확 검정
+ * - 그 외: 정규 근사(동점 보정 + 연속성 보정) — scipy.stats.mannwhitneyu(method='asymptotic') 기본과 동일
+ */
+export function mannWhitney(x, y) {
+  const n1 = x.length, n2 = y.length, N = n1 + n2;
+  if (!n1 || !n2) return null;
+  const { r, ties } = rank([...x, ...y]);
+  const R1 = r.slice(0, n1).reduce((s, v) => s + v, 0);
+  const U1 = R1 - (n1 * (n1 + 1)) / 2;
+  const U = Math.max(U1, n1 * n2 - U1);
+  const mu = (n1 * n2) / 2;
+  const tieSum = ties.reduce((s, t) => s + t ** 3 - t, 0);
+  const sigma = Math.sqrt((n1 * n2 / 12) * ((N + 1) - tieSum / (N * (N - 1))));
+  const z = sigma > 0 ? (U - mu - 0.5) / sigma : 0;
+  let p, method;
+  if (!ties.length && N <= 50) {
+    // U 분포 정확 계산: f(i,j,u) 점화식
+    const maxU = n1 * n2;
+    let prev = Array.from({ length: n2 + 1 }, () => { const a = new Float64Array(maxU + 1); a[0] = 1; return a; });
+    for (let i = 1; i <= n1; i++) {
+      const cur = Array.from({ length: n2 + 1 }, () => new Float64Array(maxU + 1));
+      cur[0][0] = 1;
+      for (let j = 1; j <= n2; j++) for (let u = 0; u <= i * j; u++) cur[j][u] = (u >= j ? prev[j][u - j] : 0) + cur[j - 1][u];
+      prev = cur;
+    }
+    const dist = prev[n2];
+    let tot = 0, tail = 0;
+    for (let u = 0; u <= maxU; u++) { tot += dist[u]; if (u >= U) tail += dist[u]; }
+    p = Math.min(1, (2 * tail) / tot);
+    method = '정확 검정';
+  } else {
+    p = sigma > 0 ? Math.min(1, 2 * (1 - normCdf(z))) : 1;
+    method = '정규 근사';
+  }
+  const zr = sigma > 0 ? (U - mu) / sigma : 0;
+  return { test: 'Mann-Whitney U', U: Math.min(U1, n1 * n2 - U1), p, method, r: Math.abs(zr) / Math.sqrt(N), n: N };
+}
+
+/** Kruskal-Wallis H 검정 (동점 보정, 카이제곱 근사) + 효과크기 ε² = H/(n−1) */
+export function kruskal(groups) {
+  const gs = groups.filter((g) => g.length);
+  const k = gs.length, N = gs.reduce((s, g) => s + g.length, 0);
+  if (k < 2) return null;
+  const { r, ties } = rank(gs.flat());
+  let idx = 0, H = 0;
+  for (const g of gs) {
+    const R = r.slice(idx, idx + g.length).reduce((s, v) => s + v, 0);
+    H += (R * R) / g.length;
+    idx += g.length;
+  }
+  H = (12 / (N * (N + 1))) * H - 3 * (N + 1);
+  const C = 1 - ties.reduce((s, t) => s + t ** 3 - t, 0) / (N ** 3 - N);
+  if (C > 0) H /= C;
+  return { test: 'Kruskal-Wallis H', H, df: k - 1, p: chi2Sf(H, k - 1), eps2: N > 1 ? H / (N - 1) : NaN, n: N, method: '카이제곱 근사' };
 }

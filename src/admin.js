@@ -8,11 +8,11 @@ import {
   DEFAULT_TITLES, titlesOf, DEFAULT_INFO_CHOICE, DEFAULT_INFO_TEXT, parseChoices, choicesToText, isEtc, WHEN, isLikert,
 } from './common.js';
 import { analyze, publicSummary } from './analysis.js';
-import { summaryView, testLine, itemTable, openView, infoView, choiceTables, groupNote } from './render.js';
+import { summaryView, testLine, itemTable, openView, infoView, choiceTables, groupNote, crossView } from './render.js';
 import { mean } from './stats.js';
 import { makeTestResponses, isTestKey } from './testdata.js';
 
-export const VERSION = 'v0.6.2';
+export const VERSION = 'v0.7.0';
 const ADMINS = ['youngpeace@gmail.com']; // firestore.rules의 목록과 같게 유지
 
 const root = document.getElementById('root');
@@ -362,11 +362,14 @@ function drawResult(el) {
         ${r.retro.shift.n >= 2 ? `<p class="note">응답 이동(실제 사전 → 회고적 사전): ${testLine(r.retro.shift).replace(/<\/?p[^>]*>/g, '')}</p>` : ''}` : ''}
       <p class="note">¹ Cohen, J. (1988). <i>Statistical power analysis for the behavioral sciences</i> (2nd ed.). Lawrence Erlbaum.</p>
     </div>` : ''}
+    ${r.cross.length ? `<div class="card page-break"><h2>교차분석 <small class="note">(교차) 표시 문항 기준</small></h2>
+      ${r.nPaired ? crossView(r, { titles: titlesOf(d) }) : '<div class="empty">사전·사후 모두 응답한 인원이 없어 교차분석을 할 수 없습니다.</div>'}
+      ${r.crossSkipped.length ? `<p class="note">※ 사후에만 실시하는 문항이라 교차분석에서 제외: ${r.crossSkipped.map(esc).join(', ')}</p>` : ''}</div>` : ''}
     ${r.infoChoice.length ? `<div class="card"><h2>${esc(titlesOf(d).info)}별 결과</h2>${infoView(r)}</div>` : ''}
     ${r.satChoice.length ? `<div class="card"><h2>${esc(titlesOf(d).sat)} — 객관식</h2>${choiceTables(r, r.satChoice)}${groupNote}</div>` : ''}
     ${r.extra.filter((x) => x.phases.some((p) => p.choice.length)).map((x) => `<div class="card"><h2>${esc(x.title)}</h2>
       ${x.phases.filter((p) => p.choice.length).map((p) => `${x.phases.length > 1 ? `<h3>${p.label} 응답</h3>` : `<p class="note">${p.label} 설문 문항</p>`}${choiceTables(r, p.choice)}`).join('')}${groupNote}</div>`).join('')}`;
-  el.querySelector('#print').onclick = () => window.print();
+  el.querySelector('#print').onclick = () => { el.querySelectorAll('details').forEach((x) => (x.open = true)); window.print(); };
   el.querySelector('#csv').onclick = downloadCsv;
 }
 
@@ -434,7 +437,7 @@ function drawSetup(el) {
     <div class="form-grid">
       <label>화면 표시 이름</label><input class="inp title-inp" id="t-info" value="${esc(titlesOf(d).info)}" />
       <label>객관식</label><div><textarea class="ta auto" rows="1" id="f-ichoice" placeholder="소속 | 교원, 직원, 기타*">${esc(choicesToText(d.infoChoice))}</textarea>
-        <p class="note">한 줄에 한 문항 · <b>질문 | 보기1, 보기2, …</b> 형식(보기는 쉼표로 구분) · 보기 끝에 <b>*</b>를 붙이면 ‘직접입력’ 보기(예: <b>기타*</b>) · 질문 끝에 <b>(복수)</b>를 붙이면 복수 선택(예: <b>관심 분야(복수) | 수업, 연구, 행정</b>)<br>· <b>‘|’ 없이 질문만</b> 쓰면 5점 척도(전혀 그렇지 않다~매우 그렇다) 문항이 됩니다.<br>객관식은 필수 응답이며, 결과 탭에서 보기별 효능감 변화가 함께 분석됩니다.</p></div>
+        <p class="note">한 줄에 한 문항 · <b>질문 | 보기1, 보기2, …</b> 형식(보기는 쉼표로 구분) · 보기 끝에 <b>*</b>를 붙이면 ‘직접입력’ 보기(예: <b>기타*</b>) · 질문 끝에 <b>(복수)</b>를 붙이면 복수 선택(예: <b>관심 분야(복수) | 수업, 연구, 행정</b>) · 질문 끝에 <b>(교차)</b>를 붙이면 결과 탭에서 이 문항의 보기별로 효능감·만족도를 나눠 보는 교차분석 기준이 됩니다(예: <b>소속(교차) | 교원, 직원</b>, 복수와 함께 <b>관심 분야(복수)(교차)</b>)<br>· <b>‘|’ 없이 질문만</b> 쓰면 5점 척도(전혀 그렇지 않다~매우 그렇다) 문항이 됩니다.<br>객관식은 필수 응답이며, 결과 탭에서 보기별 효능감 변화가 함께 분석됩니다.</p></div>
       <label>주관식</label><div><textarea class="ta auto" rows="1" id="f-itext" placeholder="예: 소속 부서">${esc(itemsToText(d.infoText))}</textarea>
         <p class="note">한 줄에 한 문항 · 선택 응답 · 이름·연락처 등 개인 식별정보는 묻지 않는 것을 권장합니다.</p></div>
     </div>
@@ -500,6 +503,12 @@ function drawSetup(el) {
       choice: parseChoices(c.querySelector('.x-choice').value, 'c'), text: parseItems(c.querySelector('.x-text').value, 't'),
     }));
     const bad = [...patch.infoChoice, ...patch.sat, ...patch.extra.flatMap((x) => x.choice)].find((q) => !isLikert(q) && q.options.length < 2);
+    // (교차) 적용 범위 안내
+    const crossWarn = [];
+    const rawLines = [v('#f-ichoice'), ...[...sets.children].map((c) => c.querySelector('.x-choice').value)].join('\n').split('\n');
+    if (rawLines.some((l) => !l.includes('|') && /\(교차\)/.test(l))) crossWarn.push('5점 척도 문항(질문만 있는 줄)의 (교차)는 적용되지 않아 저장 시 제거됩니다.');
+    if (/\(교차\)/.test(v('#f-sat'))) crossWarn.push('만족도 문항의 (교차)는 적용되지 않습니다(사후 문항).');
+    if (patch.extra.some((x) => x.when === 'post' && x.choice.some((q) => q.cross))) crossWarn.push('사후에만 실시하는 기타 문항의 (교차)는 교차분석에서 제외됩니다.');
     if (bad) return toast(`‘${bad.text}’ 문항의 보기를 2개 이상 입력하십시오. (질문 | 보기1, 보기2)`);
     if (!locked) {
       patch.scale = v('#f-scale');
@@ -507,8 +516,15 @@ function drawSetup(el) {
       patch.retro = el.querySelector('#f-retro').checked;
       if (!patch.items.length) return toast('효능감 문항을 1개 이상 입력하십시오.');
     }
+    patch.sat = patch.sat.map(({ cross, ...q }) => q);
     await update(patch);
-    toast('저장했습니다.');
+    // 저장된 형식으로 입력칸 정리(예: 5점 척도 문항의 (교차) 제거)
+    el.querySelector('#f-ichoice').value = choicesToText(patch.infoChoice);
+    el.querySelector('#f-sat').value = choicesToText(patch.sat);
+    [...sets.children].forEach((c, i) => { c.querySelector('.x-choice').value = choicesToText(patch.extra[i].choice); });
+    el.querySelectorAll('textarea.auto').forEach((t) => t.dispatchEvent(new Event('input')));
+    if (crossWarn.length) alert('저장했습니다.\n\n' + crossWarn.map((w) => '· ' + w).join('\n'));
+    else toast('저장했습니다.');
   };
   el.querySelector('#dup').onclick = () => {
     const { owner, createdAt, updatedAt, ...rest } = cur.data;

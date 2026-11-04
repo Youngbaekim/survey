@@ -37,7 +37,7 @@ export function dumbbell(s, rows, { showFactor = true } = {}) {
     const a = pos(r.pre, s), b = pos(r.post, s);
     const lo = Math.min(a, b), w = Math.abs(b - a);
     const mine = r.mine ? `<span class="db-mark pre" style="left:${pos(r.mine.pre, s)}%" title="나의 사전"></span><span class="db-mark post" style="left:${pos(r.mine.post, s)}%" title="나의 사후"></span>` : '';
-    return `<div class="db-row">
+    return `<div class="db-row${r.muted ? ' muted' : ''}">
       <div class="db-label">${showFactor && r.factor ? `<em>${esc(r.factor)}</em> ` : ''}${esc(r.label)}</div>
       <div class="db-track"><span class="db-bar ${r.post >= r.pre ? 'up' : 'down'}" style="left:${lo}%;width:${w}%"></span><span class="db-dot pre" style="left:${a}%"></span><span class="db-dot post" style="left:${b}%"></span>${mine}</div>
       <div class="db-val">${fmt(r.pre, d)} → ${fmt(r.post, d)} <b class="${r.diff >= 0 ? 'up-c' : 'down-c'}">${fmtSigned(r.diff, d)}</b></div>
@@ -154,3 +154,50 @@ export function choiceTables(s, list) {
 }
 export const groupNote = '<p class="note">보기별 효능감 변화는 사전·사후 모두 응답한 사람(짝) 기준이며, 인원이 적으면 해석에 주의가 필요합니다(짝 n &lt; 5는 참고용).</p>';
 export const infoView = (s) => (s.infoChoice?.length ? choiceTables(s, s.infoChoice) + groupNote : '');
+
+/** (교차) 교차분석 — 관리자 결과 탭 전용 */
+export function crossView(s, { titles = DEFAULT_TITLES } = {}) {
+  if (!s.cross?.length) return '';
+  const d = dec(s);
+  const tag = (g, n) => (n < g.minN ? ' <small class="note">참고용</small>' : '');
+  const cell = (o, minN) => (o.n ? `<span class="${o.n < minN ? 'muted-t' : ''}">${fmt(o.pre, d)} → ${fmt(o.post, d)}<br><b class="${o.diff >= 0 ? 'up-c' : 'down-c'}">${fmtSigned(o.diff, d)}</b> <small>n=${o.n}</small></span>` : '<span class="note">-</span>');
+  const one = (c) => {
+    const G = c.groups;
+    const head = `<tr><th>구분</th>${G.map((g) => `<th>${esc(g.label)}<br><small>짝 n=${g.overall.n}</small></th>`).join('')}</tr>`;
+    const rows = [['<b>전체(문항 평균)</b>', (g) => g.overall], ...(G[0]?.factors || []).map((f, i) => [`<b>[${esc(f.name)}]</b>`, (g) => g.factors[i]])];
+    const itemRows = (G[0]?.items || []).map((it, i) => [`${i + 1}. ${esc(it.text)}`, (g) => g.items[i]]);
+    const tbl = (rs) => `<div class="tbl-wrap"><table class="tbl cross"><thead>${head}</thead><tbody>${rs.map(([l, f]) => `<tr><td>${l}</td>${G.map((g) => `<td class="num">${cell(f(g), c.minN)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    const t = c.test;
+    const testHtml = t
+      ? `<p class="stat-line">집단 간 효능감 변화량 차이(${t.groups.map(esc).join(' · ')}): ${t.test === 'Mann-Whitney U'
+          ? `Mann-Whitney U = ${fmt(t.U, 1)}, ${fmtP(t.p)} (${t.method}) · 효과크기 r = ${fmt(t.r)}`
+          : `Kruskal-Wallis H(${t.df}) = ${fmt(t.H)}, ${fmtP(t.p)} (${t.method}) · 효과크기 ε² = ${fmt(t.eps2)}`} · n = ${t.n}</p>`
+      : `<p class="stat-line">${esc(c.testNote)}</p>`;
+    const satLik = G[0]?.sat || [];
+    const satTbl = satLik.length ? `<h4>${esc(titles.sat)} — 집단별 평균(긍정 4·5점 비율)</h4><div class="tbl-wrap"><table class="tbl cross"><thead><tr><th>문항</th>${G.map((g) => `<th>${esc(g.label)}<br><small>n=${g.nPost}</small></th>`).join('')}</tr></thead><tbody>
+      ${satLik.map((it, i) => `<tr><td>${esc(it.text)}</td>${G.map((g) => { const v = g.sat[i]; return `<td class="num"><span class="${v.n < c.minN ? 'muted-t' : ''}">${v.n ? `${fmt(v.mean)} <small>(${pct(v.pos)})</small>` : '-'}</span></td>`; }).join('')}</tr>`).join('')}</tbody></table></div>` : '';
+    const satCh = (G[0]?.satChoice || []).map((sq, i) => `<h4>${esc(titles.sat)} — ${esc(sq.text)} (집단별 선택 비율)</h4><div class="tbl-wrap"><table class="tbl cross"><thead><tr><th>보기</th>${G.map((g) => `<th>${esc(g.label)}<br><small>n=${g.satChoice[i].n}</small></th>`).join('')}</tr></thead><tbody>
+      ${sq.options.map((o, j) => `<tr><td>${esc(o.label)}</td>${G.map((g) => { const x = g.satChoice[i]; return `<td class="num"><span class="${x.n < c.minN ? 'muted-t' : ''}">${x.n ? `${pct(x.options[j].pct)} <small>(${x.options[j].count})</small>` : '-'}</span></td>`; }).join('')}</tr>`).join('')}</tbody></table></div>`).join('');
+    return `<details class="cross-card" open><summary><b>${esc(c.text)}</b> <small class="note">기준 문항 · ${esc(c.src === 'info' ? titles.info : c.src)}${c.multi ? ' · 복수 선택' : ''}</small></summary>
+      <h4>${esc(titles.eff)} 변화 — 집단별</h4>${legend()}
+      ${dumbbell(s, G.map((g) => ({ label: `${g.label} (짝 n=${g.overall.n})${g.overall.n < c.minN ? ' · 참고용' : ''}`, pre: g.overall.pre, post: g.overall.post, diff: g.overall.diff, muted: g.overall.n < c.minN })).filter((r) => Number.isFinite(r.pre)))}
+      ${testHtml}
+      <h4>${esc(titles.eff)} — 요인별 집단 비교</h4>${tbl(rows)}
+      <details class="sub"><summary>문항별 집단 비교 펼치기</summary>${tbl(itemRows)}</details>
+      ${satTbl}${satCh}
+    </details>`;
+  };
+  return s.cross.map(one).join('') + crossGuide(s.cross[0]?.minN || 5, titles);
+}
+
+export function crossGuide(minN, titles = DEFAULT_TITLES) {
+  return `<div class="guide"><b>해석 안내</b><ul>
+    <li><b>무엇을 보는가</b>: (교차) 표시한 문항의 보기별로 응답자를 나눠, 집단마다 ${esc(titles.eff)} 변화(사전 → 사후)와 ${esc(titles.sat)}를 비교합니다. 효능감은 사전·사후 모두 응답한 사람(짝), ${esc(titles.sat)}는 사후 응답자 기준입니다.</li>
+    <li><b>소집단</b>: 짝 n이 ${minN}명 미만인 집단은 흐리게 표시한 <b>참고용</b>이며 검정에서 제외합니다. 몇 명의 응답으로 평균이 크게 바뀔 수 있습니다.</li>
+    <li><b>검정은 한 번만</b>: 집단 간 차이는 <b>전체 효능감 변화량</b>에 대해서만 검정합니다(2개 집단 Mann-Whitney U, 3개 이상 Kruskal-Wallis). 요인·문항·${esc(titles.sat)} 표는 기술통계이며, 여러 칸을 비교하다 보면 우연한 차이도 나타나므로 개별 칸의 차이를 ‘유의하다’고 해석하지 마십시오.</li>
+    <li><b>p값과 효과크기</b>: p &lt; .05는 ‘집단 간 차이가 우연이라고 보기 어렵다’는 뜻이며, 어느 집단이 더 큰지는 표의 변화량으로 확인합니다. 효과크기는 차이의 크기를 나타냅니다. r은 0.1 작음·0.3 중간·0.5 큼¹, ε²는 0~1 값으로 클수록 차이가 크며 η² 관례 기준(0.01·0.06·0.14)을 참고할 수 있습니다¹·². 소집단에서는 p값보다 효과크기와 표의 변화량을 함께 보십시오.</li>
+    <li><b>복수 선택</b>: 한 사람이 여러 집단에 포함되므로 집단 간 검정을 하지 않고 기술통계만 제시합니다.</li>
+    <li><b>인과 해석 주의</b>: 집단 차이는 소속·경력 등 특성과 함께 나타난 차이일 뿐 원인을 뜻하지 않으며, 모두 교육 직후의 자기보고입니다. 직접입력 내용은 ‘기타’ 집단으로 묶었습니다.</li>
+    <li><b>기준 문항 범위</b>: 사전에 실시한 객관식만 기준으로 씁니다(사후 실시 문항·5점 척도 문항의 (교차)는 적용하지 않음).</li>
+  </ul><p class="note">¹ Cohen, J. (1988). <i>Statistical power analysis for the behavioral sciences</i> (2nd ed.). Lawrence Erlbaum. ² ε² = H ÷ (n − 1): Tomczak, M., &amp; Tomczak, E. (2014). The need to report effect size estimates revisited. <i>Trends in Sport Sciences, 21</i>(1), 19–25.</p></div>`;
+}
